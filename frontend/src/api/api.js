@@ -22,9 +22,10 @@ export const computeAllScores = async (start, end, nSubseq = 1000) => {
 }
 
 // ═══ Bibliothèque de patterns ══════════════════════════════════════════════════
-export const savePattern = async (start, end, name, description, matchCount) => {
+export const savePattern = async (start, end, name, description, matchCount, distribution) => {
   const res = await API.post("/patterns/save", {
-    start, end, name, description, match_count: matchCount
+    start, end, name, description, match_count: matchCount,
+    distribution: distribution || null
   })
   return res.data
 }

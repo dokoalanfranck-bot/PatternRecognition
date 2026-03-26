@@ -155,7 +155,15 @@ async def save_pattern_endpoint(request: dict):
         "max":            round(float(np.max(arr)), 4),
     }
 
-    # Compter les matches ≥80% pour info
+    # Distribution des similarités
+    distribution = request.get("distribution")
+    if distribution:
+        stats["distribution"] = {
+            "excellent": distribution.get("excellent", {}).get("count", 0),
+            "good":      distribution.get("good", {}).get("count", 0),
+            "low":       distribution.get("low", {}).get("count", 0),
+        }
+
     match_count = int(request.get("match_count", 0))
 
     pid = db.save_pattern(name, description, values, dates_list, stats, match_count)

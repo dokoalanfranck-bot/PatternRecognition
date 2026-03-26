@@ -82,8 +82,81 @@ const MiniSparkline = memo(({ values }) => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Pattern Detail View — the "dream" view
+//  Pattern Detail View
 // ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── Distribution bar (visual) ────────────────────────────────────────────────
+const DistributionSection = memo(({ dist, matchCount }) => {
+  if (!dist) {
+    return (
+      <div style={{ ...SEC, textAlign: "center", color: "#aaa", fontSize: 12, padding: 20 }}>
+        Distribution non disponible (pattern sauvegardé avant cette fonctionnalité).
+        <br />Resauvegardez le pattern pour enregistrer la distribution.
+      </div>
+    )
+  }
+
+  const excellent = dist.excellent || 0
+  const good = dist.good || 0
+  const low = dist.low || 0
+  const total = excellent + good + low
+
+  const segments = [
+    { label: "Excellent (≥80%)", count: excellent, color: "#2ecc71", bg: "#eafaf1" },
+    { label: "Bon (50–79%)",     count: good,      color: "#3498db", bg: "#ebf5fb" },
+    { label: "Faible (<50%)",    count: low,       color: "#f39c12", bg: "#fef9e7" },
+  ]
+
+  return (
+    <div style={SEC}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#2d3436", marginBottom: 12 }}>
+        Répartition des occurrences
+        <span style={{ fontWeight: 400, color: "#aaa", fontSize: 12, marginLeft: 8 }}>
+          {total} patterns trouvés au total
+        </span>
+      </div>
+
+      {/* Bar */}
+      {total > 0 && (
+        <div style={{ display: "flex", borderRadius: 8, overflow: "hidden", height: 36, marginBottom: 14 }}>
+          {segments.map(s => {
+            const pct = (s.count / total) * 100
+            if (pct === 0) return null
+            return (
+              <div key={s.label} style={{
+                width: `${pct}%`, background: s.color,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: "#fff", fontSize: 12, fontWeight: 700,
+                minWidth: s.count > 0 ? 36 : 0,
+                transition: "width 0.3s"
+              }}>
+                {s.count}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Cards per interval */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+        {segments.map(s => {
+          const pct = total > 0 ? ((s.count / total) * 100).toFixed(1) : "0"
+          return (
+            <div key={s.label} style={{
+              background: s.bg, borderRadius: 10, padding: "14px 16px",
+              borderLeft: `4px solid ${s.color}`, textAlign: "center"
+            }}>
+              <div style={{ fontSize: 28, fontWeight: 800, color: s.color }}>{s.count}</div>
+              <div style={{ fontSize: 11, color: "#555", marginTop: 4, fontWeight: 600 }}>{s.label}</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: s.color, marginTop: 4 }}>{pct}%</div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+})
+
 const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -107,46 +180,17 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
     } catch { setDeleting(false) }
   }, [patternSummary.id, onDeleted])
 
-  // ── Derived stats ──
+  // ── Derived stats (only essentials) ──
   const computed = useMemo(() => {
     if (!detail?.values?.length) return null
     const v = detail.values
     const n = v.length
     const mean = v.reduce((a, b) => a + b, 0) / n
-    const variance = v.reduce((a, b) => a + (b - mean) ** 2, 0) / n
-    const std = Math.sqrt(variance)
+    const std = Math.sqrt(v.reduce((a, b) => a + (b - mean) ** 2, 0) / n)
     const sorted = [...v].sort((a, b) => a - b)
-    const median = n % 2 === 0 ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2 : sorted[Math.floor(n / 2)]
     const min = sorted[0], max = sorted[n - 1]
     const amplitude = max - min
-    const energy = v.reduce((a, b) => a + b, 0)
-    const rms = Math.sqrt(v.reduce((a, b) => a + b * b, 0) / n)
-
-    // Trend (linear regression slope)
-    const xMean = (n - 1) / 2
-    let num = 0, den = 0
-    for (let i = 0; i < n; i++) { num += (i - xMean) * (v[i] - mean); den += (i - xMean) ** 2 }
-    const slope = den !== 0 ? num / den : 0
-    const trendPct = mean !== 0 ? (slope * n / mean) * 100 : 0
-
-    // Quartiles
-    const q1 = sorted[Math.floor(n * 0.25)]
-    const q3 = sorted[Math.floor(n * 0.75)]
-    const iqr = q3 - q1
-
-    // Coefficient of variation
-    const cv = mean !== 0 ? (std / Math.abs(mean)) * 100 : 0
-
-    // Peak-to-peak changes
-    const diffs = []
-    for (let i = 1; i < n; i++) diffs.push(Math.abs(v[i] - v[i - 1]))
-    const avgChange = diffs.length ? diffs.reduce((a, b) => a + b, 0) / diffs.length : 0
-    const maxChange = diffs.length ? Math.max(...diffs) : 0
-
-    return {
-      mean, std, variance, median, min, max, amplitude, energy, rms,
-      slope, trendPct, q1, q3, iqr, cv, avgChange, maxChange, n
-    }
+    return { mean, std, min, max, amplitude, n }
   }, [detail])
 
   // ── Plotly: main curve ──
@@ -171,8 +215,7 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
       height: 300, margin: { t: 10, b: 40, l: 55, r: 20 },
       xaxis: {
         type: detail?.dates?.length ? "date" : "linear",
-        showgrid: false, tickfont: { size: 10 },
-        title: { text: detail?.dates?.length ? "" : "Index", font: { size: 10, color: "#aaa" } }
+        showgrid: false, tickfont: { size: 10 }
       },
       yaxis: {
         showgrid: true, gridcolor: "#f0f0f0", tickfont: { size: 10 },
@@ -180,61 +223,15 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
       },
       plot_bgcolor: "#fafafa", paper_bgcolor: "#fff",
       shapes: [
-        // Mean line
         { type: "line", x0: 0, x1: 1, xref: "paper", y0: computed.mean, y1: computed.mean,
           line: { color: "#0984e3", width: 1.5, dash: "dash" } },
-        // ±1 std band
-        { type: "rect", x0: 0, x1: 1, xref: "paper",
-          y0: computed.mean - computed.std, y1: computed.mean + computed.std,
-          fillcolor: "rgba(9,132,227,0.06)", line: { width: 0 } },
       ],
       annotations: [
-        { x: 1, xref: "paper", y: computed.mean, text: `μ=${fmt(computed.mean)}`,
+        { x: 1, xref: "paper", y: computed.mean, text: `μ = ${fmt(computed.mean)} kW`,
           showarrow: false, font: { size: 10, color: "#0984e3" }, xanchor: "left", xshift: 4 }
       ]
     }
   }, [computed, detail])
-
-  // ── Plotly: histogram ──
-  const histData = useMemo(() => {
-    if (!detail?.values?.length) return []
-    return [{
-      x: detail.values, type: "histogram", nbinsx: 25,
-      marker: { color: "rgba(108,92,231,0.5)", line: { color: "#6c5ce7", width: 1 } },
-      hovertemplate: "%{x:.1f} kW<br>Fréquence: %{y}<extra></extra>"
-    }]
-  }, [detail])
-
-  const histLayout = useMemo(() => ({
-    height: 200, margin: { t: 8, b: 35, l: 45, r: 15 },
-    xaxis: { title: { text: "Valeur (kW)", font: { size: 10, color: "#888" } }, tickfont: { size: 9 }, showgrid: false },
-    yaxis: { title: { text: "Fréquence", font: { size: 10, color: "#888" } }, tickfont: { size: 9 }, showgrid: true, gridcolor: "#f0f0f0" },
-    plot_bgcolor: "#fafafa", paper_bgcolor: "#fff",
-    bargap: 0.05,
-    shapes: computed ? [
-      { type: "line", x0: computed.median, x1: computed.median, y0: 0, y1: 1, yref: "paper",
-        line: { color: "#e17055", width: 1.5, dash: "dot" } }
-    ] : []
-  }), [computed])
-
-  // ── Plotly: box plot ──
-  const boxData = useMemo(() => {
-    if (!detail?.values?.length) return []
-    return [{
-      y: detail.values, type: "box", name: "Distribution",
-      marker: { color: "#6c5ce7", outliercolor: "#e74c3c" },
-      boxmean: "sd",
-      fillcolor: "rgba(108,92,231,0.15)",
-      line: { color: "#6c5ce7" }
-    }]
-  }, [detail])
-
-  const boxLayout = useMemo(() => ({
-    height: 200, margin: { t: 8, b: 10, l: 45, r: 15 },
-    yaxis: { title: { text: "kW", font: { size: 10, color: "#888" } }, tickfont: { size: 9 }, showgrid: true, gridcolor: "#f0f0f0" },
-    plot_bgcolor: "#fafafa", paper_bgcolor: "#fff",
-    showlegend: false
-  }), [])
 
   if (loading) {
     return (
@@ -278,9 +275,6 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
           )}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={BADGE("#f0edff", "#6c5ce7")}>
-            {detail.match_count} occurrences
-          </span>
           <span style={{ fontSize: 11, color: "#aaa" }}>
             {formatDate(detail.created_at)}
           </span>
@@ -310,16 +304,15 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
         </div>
       </div>
 
-      {/* ── Key metrics row ── */}
+      {/* ── Key metrics ── */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
         <StatCard label="Points" value={fmt(computed.n, 0)} color="#6c5ce7" icon="📐" />
         <StatCard label="Durée" value={fmt(st.duration_hours)} unit="h" color="#0984e3" icon="⏱" />
-        <StatCard label="Occurrences" value={fmt(detail.match_count, 0)} color="#2ecc71" icon="🔁" />
-        <StatCard label="Énergie totale" value={fmt(computed.energy, 0)} unit="kW·pts" color="#fdcb6e" icon="⚡" />
-        <StatCard label="RMS" value={fmt(computed.rms)} unit="kW" color="#e17055" icon="〰" />
-        <StatCard label="Tendance" value={`${computed.trendPct >= 0 ? "+" : ""}${fmt(computed.trendPct, 1)}%`}
-          color={computed.trendPct >= 0 ? "#2ecc71" : "#e74c3c"}
-          icon={computed.trendPct >= 0 ? "📈" : "📉"} />
+        <StatCard label="Moyenne" value={fmt(computed.mean)} unit="kW" color="#0984e3" icon="μ" />
+        <StatCard label="Écart-type" value={fmt(computed.std)} unit="kW" color="#6c5ce7" icon="σ" />
+        <StatCard label="Min" value={fmt(computed.min)} unit="kW" color="#00b894" icon="▼" />
+        <StatCard label="Max" value={fmt(computed.max)} unit="kW" color="#d63031" icon="▲" />
+        <StatCard label="Amplitude" value={fmt(computed.amplitude)} unit="kW" color="#e17055" icon="↕" />
       </div>
 
       {/* ── Pattern curve ── */}
@@ -327,7 +320,7 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
         <div style={{ fontSize: 13, fontWeight: 700, color: "#2d3436", marginBottom: 6 }}>
           Forme du pattern
           <span style={{ fontWeight: 400, color: "#aaa", fontSize: 11, marginLeft: 8 }}>
-            Ligne pointillée = moyenne · Bande = ±1σ
+            Ligne pointillée = moyenne
           </span>
         </div>
         {curveData.length > 0 && (
@@ -336,108 +329,14 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
         )}
       </div>
 
-      {/* ── Stats grid ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
-        {/* Left: Central tendency & dispersion */}
-        <div style={SEC}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#2d3436", marginBottom: 10 }}>
-            Tendance centrale & Dispersion
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <StatCard label="Moyenne" value={fmt(computed.mean)} unit="kW" color="#0984e3" icon="μ" />
-            <StatCard label="Médiane" value={fmt(computed.median)} unit="kW" color="#e17055" icon="M" />
-            <StatCard label="Écart-type" value={fmt(computed.std)} unit="kW" color="#6c5ce7" icon="σ" />
-            <StatCard label="Variance" value={fmt(computed.variance)} unit="kW²" color="#a29bfe" icon="σ²" />
-            <StatCard label="CV" value={fmt(computed.cv, 1)} unit="%" color="#fd79a8" icon="%" />
-          </div>
-        </div>
-
-        {/* Right: Extremes */}
-        <div style={SEC}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#2d3436", marginBottom: 10 }}>
-            Extrêmes & Amplitude
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <StatCard label="Min" value={fmt(computed.min)} unit="kW" color="#00b894" icon="▼" />
-            <StatCard label="Max" value={fmt(computed.max)} unit="kW" color="#d63031" icon="▲" />
-            <StatCard label="Amplitude" value={fmt(computed.amplitude)} unit="kW" color="#e17055" icon="↕" />
-            <StatCard label="IQR (Q3−Q1)" value={fmt(computed.iqr)} unit="kW" color="#00cec9" icon="┃" />
-          </div>
-        </div>
-      </div>
-
-      {/* ── Charts row: histogram + boxplot ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
-        <div style={{ ...SEC, padding: "10px 14px" }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#2d3436", marginBottom: 6 }}>
-            Distribution des valeurs
-            <span style={{ fontWeight: 400, color: "#aaa", fontSize: 11, marginLeft: 8 }}>
-              Ligne pointillée = médiane
-            </span>
-          </div>
-          {histData.length > 0 && (
-            <Plot data={histData} layout={histLayout} config={PLOT_CFG}
-              style={{ width: "100%" }} useResizeHandler />
-          )}
-        </div>
-
-        <div style={{ ...SEC, padding: "10px 14px" }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#2d3436", marginBottom: 6 }}>
-            Boîte à moustaches
-            <span style={{ fontWeight: 400, color: "#aaa", fontSize: 11, marginLeft: 8 }}>
-              Diamant = moyenne ± σ
-            </span>
-          </div>
-          {boxData.length > 0 && (
-            <Plot data={boxData} layout={boxLayout} config={PLOT_CFG}
-              style={{ width: "100%" }} useResizeHandler />
-          )}
-        </div>
-      </div>
-
-      {/* ── Variability & quartiles ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
-        <div style={SEC}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#2d3436", marginBottom: 10 }}>
-            Variabilité point-à-point
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <StatCard label="Δ moyen" value={fmt(computed.avgChange)} unit="kW" color="#0984e3" icon="≈" />
-            <StatCard label="Δ max" value={fmt(computed.maxChange)} unit="kW" color="#e74c3c" icon="!" />
-            <StatCard label="Pente" value={fmt(computed.slope, 4)} unit="kW/pt" color="#00b894" icon="⟋" />
-          </div>
-        </div>
-
-        <div style={SEC}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#2d3436", marginBottom: 10 }}>
-            Quartiles
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <StatCard label="Q1 (25%)" value={fmt(computed.q1)} unit="kW" color="#74b9ff" icon="¼" />
-            <StatCard label="Médiane (50%)" value={fmt(computed.median)} unit="kW" color="#e17055" icon="½" />
-            <StatCard label="Q3 (75%)" value={fmt(computed.q3)} unit="kW" color="#a29bfe" icon="¾" />
-          </div>
-        </div>
-      </div>
+      {/* ── Distribution des occurrences par intervalle ── */}
+      <DistributionSection dist={st.distribution} matchCount={detail.match_count} />
 
       {/* ── Temporal info ── */}
-      <div style={SEC}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#2d3436", marginBottom: 8 }}>
-          Informations temporelles
-        </div>
+      <div style={{ ...SEC, padding: "10px 16px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "6px 20px", fontSize: 12, color: "#555" }}>
           <div><span style={{ color: "#888" }}>Début :</span> <strong>{formatDateStr(detail.dates?.[0])}</strong></div>
           <div><span style={{ color: "#888" }}>Fin :</span> <strong>{formatDateStr(detail.dates?.[detail.dates.length - 1])}</strong></div>
-          <div><span style={{ color: "#888" }}>Durée :</span> <strong>{fmt(st.duration_hours)} h</strong></div>
-          <div><span style={{ color: "#888" }}>Points :</span> <strong>{computed.n}</strong></div>
-          <div>
-            <span style={{ color: "#888" }}>Résolution :</span>{" "}
-            <strong>
-              {detail.dates?.length >= 2
-                ? `${fmt((new Date(detail.dates[1]) - new Date(detail.dates[0])) / 1000, 0)} s`
-                : "-"}
-            </strong>
-          </div>
           <div><span style={{ color: "#888" }}>Sauvegardé :</span> <strong>{formatDate(detail.created_at)}</strong></div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-﻿import React, { memo, useState, useCallback } from "react"
+import React, { memo, useState, useCallback } from "react"
 import { savePattern } from "../api/api"
 
 function fmt(v, d = 2) {
@@ -89,7 +89,8 @@ const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved }) => {
     setSaving(true)
     setSaveMsg(null)
     try {
-      const res = await savePattern(pi.start, pi.end, saveName.trim(), saveDesc.trim(), matchCount || 0)
+      const dist = monitoring?.distribution || null
+      const res = await savePattern(pi.start, pi.end, saveName.trim(), saveDesc.trim(), matchCount || 0, dist)
       if (res.error) { setSaveMsg({ type: "error", text: res.error }) }
       else {
         setSaveMsg({ type: "ok", text: res.message })
