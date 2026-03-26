@@ -10,39 +10,51 @@ def z_normalize(x):
     return (x - np.mean(x)) / std
 
 
-def _get_non_overlapping(distance_profile, k, exclusion_zone):
-    """Extrait les top-k indices sans chevauchement via exclusion zone."""
-    profile = distance_profile.copy()
+def _get_non_overlapping_fast(distance_profile, k, exclusion_zone):
+    """
+    Version vectorisée de l'extraction non-chevauchante.
+
+    Stratégie : on trie le profil une seule fois (O(n log n))
+    puis on parcourt les candidats triés en ne gardant que ceux
+    qui ne chevauchent pas les précédents.
+
+    Si k <= 0, retourne TOUS les motifs non-chevauchants.
+    """
+    sorted_indices = np.argsort(distance_profile)
+
     indices = []
-    for _ in range(k):
-        idx = int(np.argmin(profile))
-        if profile[idx] == np.inf:
+    blocked = np.zeros(len(distance_profile), dtype=bool)
+    unlimited = (k <= 0)
+
+    for idx in sorted_indices:
+        if not unlimited and len(indices) >= k:
             break
-        indices.append(idx)
+        if distance_profile[idx] == np.inf:
+            break
+        if blocked[idx]:
+            continue
+
+        indices.append(int(idx))
+
         lo = max(0, idx - exclusion_zone)
-        hi = min(len(profile), idx + exclusion_zone)
-        profile[lo:hi] = np.inf
+        hi = min(len(distance_profile), idx + exclusion_zone)
+        blocked[lo:hi] = True
+
     return indices
 
 
-def search_pattern(series, pattern, top_k=10):
+def search_pattern(series, pattern, top_k=0):
     """
-    Recherche les top_k sous-séquences les plus similaires au pattern
+    Recherche les sous-séquences les plus similaires au pattern
     dans la série via MASS (stumpy) en O(n log n).
-    Une exclusion zone de pattern_len // 2 garantit des résultats
-    non chevauchants.
+
+    top_k=0  → retourne TOUS les motifs non-chevauchants.
+    top_k>0  → retourne au plus top_k motifs.
     """
     pattern_len = len(pattern)
     pattern_amp = float(np.max(pattern) - np.min(pattern))
 
-    diagnostics = {
-        "total_positions": 0,
-        "passed_amplitude": -1,
-        "passed_variance": -1,
-        "passed_correlation": -1,
-        "final_computed": 0,
-        "step": 1,
-    }
+    diagnostics = {"total_positions": 0, "final_computed": 0}
 
     if pattern_amp < 0.01:
         return [], diagnostics
@@ -50,20 +62,15 @@ def search_pattern(series, pattern, top_k=10):
     if pattern_len > len(series):
         return [], diagnostics
 
-    # MASS normalise en interne — pas besoin de z_normalize ici
     distance_profile = stumpy.mass(pattern, series)
-
-    # Remplacer les NaN par inf pour éviter les erreurs d'argsort
     distance_profile = np.where(np.isnan(distance_profile), np.inf, distance_profile)
 
     diagnostics["total_positions"] = len(distance_profile)
 
-    # Extraction non chevauchante
     exclusion_zone = pattern_len // 2
-    top_indices = _get_non_overlapping(distance_profile, top_k, exclusion_zone)
+    top_indices = _get_non_overlapping_fast(distance_profile, top_k, exclusion_zone)
 
     results = [{"index": i, "score": float(distance_profile[i])} for i in top_indices]
-
     diagnostics["final_computed"] = len(results)
 
     return results, diagnostics

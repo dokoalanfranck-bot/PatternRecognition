@@ -1,180 +1,265 @@
 from fastapi import APIRouter
+from fastapi.concurrency import run_in_threadpool
 from backend.services.data_loader import load_dataset
 from backend.services.dtw_similarity import search_pattern, z_normalize
+from backend.services import database as db
 import numpy as np
 import time
 
 router = APIRouter()
 
 data = load_dataset()
-
 series = data["value"].values
-
 dates = data.index
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ANALYSE — Recherche de patterns dans la série
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/pattern")
+async def detect_pattern(request: dict):
+    start = request["start"]
+    end = request["end"]
+    top_k = int(request.get("top_k", 0))
+
+    def _detect():
+        t0 = time.time()
+        pattern = data.loc[start:end]["value"].values
+
+        if len(pattern) < 10:
+            return {"matches": [], "error": "Sélection trop courte (min 10 points)."}
+
+        matches, diagnostics = search_pattern(series, pattern, top_k)
+        elapsed = time.time() - t0
+
+        # ─── Enrichir chaque match ─────────────────────────────────────────
+        results = []
+        for m in matches:
+            end_idx = min(m["index"] + len(pattern), len(dates) - 1)
+            window = series[m["index"]:m["index"] + len(pattern)]
+            results.append({
+                "start":      str(dates[m["index"]]),
+                "end":        str(dates[end_idx]),
+                "score":      float(m["score"]),
+                "match_mean": float(np.mean(window)),
+                "match_std":  float(np.std(window)),
+                "match_min":  float(np.min(window)),
+                "match_max":  float(np.max(window)),
+            })
+
+        # ─── Stats du pattern sélectionné ──────────────────────────────────
+        pat_slice = data.loc[start:end]
+        try:
+            dur_h = round((pat_slice.index[-1] - pat_slice.index[0]).total_seconds() / 3600, 2)
+        except Exception:
+            dur_h = 0
+
+        pattern_info = {
+            "nb_points":      len(pattern),
+            "start":          str(pat_slice.index[0]),
+            "end":            str(pat_slice.index[-1]),
+            "duration_hours": dur_h,
+            "amplitude":      round(float(np.ptp(pattern)), 4),
+            "mean":           round(float(np.mean(pattern)), 4),
+            "std":            round(float(np.std(pattern)), 4),
+            "min":            round(float(np.min(pattern)), 4),
+            "max":            round(float(np.max(pattern)), 4),
+            "energy_total":   round(float(np.sum(pattern)), 2),
+        }
+
+        # ─── Infos recherche ───────────────────────────────────────────────
+        search_info = {
+            "series_length":           len(series),
+            "total_positions_scanned": diagnostics["total_positions"],
+            "matches_returned":        len(results),
+            "computation_time_sec":    round(elapsed, 3),
+        }
+
+        # ─── Distribution de similarité ────────────────────────────────────
+        distribution, score_stats = _compute_distribution(results)
+
+        return {
+            "matches": results,
+            "monitoring": {
+                "pattern_info": pattern_info,
+                "search_info":  search_info,
+                "distribution": distribution,
+                "score_stats":  score_stats,
+            },
+        }
+
+    return await run_in_threadpool(_detect)
+
+
 @router.post("/scores")
-def compute_all_scores(request: dict):
-    """Calcule le score Euclidien normalisé du pattern vs les N premières
-    sous-séquences. Utilise la distance euclidienne (O(n)) au lieu de DTW
-    (O(n²)) pour une réponse quasi-instantanée."""
+async def compute_all_scores(request: dict):
     start = request["start"]
     end = request["end"]
     n_subseq = int(request.get("n_subseq", 1000))
 
-    pattern = data.loc[start:end]["value"].values
+    def _compute():
+        pattern = data.loc[start:end]["value"].values
+        if len(pattern) < 10:
+            return {"scores": [], "error": "Sélection trop courte."}
 
-    if len(pattern) < 10:
-        return {"scores": [], "error": "Sélection trop courte."}
+        pat_norm = z_normalize(pattern)
+        step = max(1, int(len(pattern) * 0.2))
+        positions = list(range(0, len(series) - len(pattern), step))[:n_subseq]
 
-    pattern_len = len(pattern)
-    pattern_norm = z_normalize(pattern)
-    step = max(1, int(pattern_len * 0.2))
-    total_positions = range(0, len(series) - pattern_len, step)
+        scores = []
+        for i in positions:
+            w = z_normalize(series[i:i + len(pattern)])
+            scores.append({"index": i, "score": float(np.sqrt(np.sum((pat_norm - w) ** 2)))})
 
-    positions = list(total_positions)[:n_subseq]
+        return {"scores": scores, "total_subsequences": len(positions), "computed": len(scores)}
 
-    scores = []
-    for i in positions:
-        window = series[i:i + pattern_len]
-        window_norm = z_normalize(window)
-        score = float(np.sqrt(np.sum((pattern_norm - window_norm) ** 2)))
-        scores.append({"index": i, "score": score})
-
-    return {
-        "scores": scores,
-        "total_subsequences": len(list(total_positions)),
-        "computed": len(scores)
-    }
+    return await run_in_threadpool(_compute)
 
 
-@router.post("/pattern")
-def detect_pattern(request: dict):
+# ═══════════════════════════════════════════════════════════════════════════════
+#  BIBLIOTHÈQUE — CRUD patterns sauvegardés
+# ═══════════════════════════════════════════════════════════════════════════════
 
+@router.post("/patterns/save")
+async def save_pattern_endpoint(request: dict):
     start = request["start"]
     end = request["end"]
-    top_k = int(request.get("top_k", 10))
+    name = request.get("name", "").strip()
+    description = request.get("description", "").strip()
 
-    t0 = time.time()
+    if not name:
+        return {"error": "Le nom du pattern est obligatoire."}
 
-    pattern = data.loc[start:end]["value"].values
+    pat_slice = data.loc[start:end]
+    values = pat_slice["value"].tolist()
+    dates_list = [str(d) for d in pat_slice.index]
 
-    # Validation : le pattern doit avoir au moins 10 points
-    if len(pattern) < 10:
-        return {"matches": [], "error": "Sélection trop courte. Choisissez une zone d'au moins 10 points."}
+    if len(values) < 10:
+        return {"error": "Pattern trop court (min 10 points)."}
 
-    # Validation : top_k raisonnable (MASS calcule tout en un seul passage,
-    # donc pas de surcoût à retourner beaucoup de résultats)
-    top_k = max(1, min(top_k, 10000))
-
-    matches, diagnostics = search_pattern(series, pattern, top_k)
-
-    elapsed = time.time() - t0
-
-    # ─── Construire les résultats enrichis ───
-    results = []
-    for m in matches:
-        start_date = dates[m["index"]]
-        end_idx = min(m["index"] + len(pattern), len(dates) - 1)
-        end_date = dates[end_idx]
-
-        # Stats individuelles du match
-        match_window = series[m["index"]:m["index"] + len(pattern)]
-        results.append({
-            "start": str(start_date),
-            "end": str(end_date),
-            "score": float(m["score"]),
-            "match_mean": float(np.mean(match_window)),
-            "match_std": float(np.std(match_window)),
-            "match_min": float(np.min(match_window)),
-            "match_max": float(np.max(match_window)),
-        })
-
-    # ─── Monitoring : infos pattern ───
-    pattern_start_date = str(data.loc[start:end].index[0]) if len(pattern) > 0 else start
-    pattern_end_date = str(data.loc[start:end].index[-1]) if len(pattern) > 0 else end
-    # Durée en heures
+    # Stats à sauvegarder
+    arr = np.array(values)
     try:
-        duration_sec = (data.loc[start:end].index[-1] - data.loc[start:end].index[0]).total_seconds()
-        duration_hours = round(duration_sec / 3600, 2)
+        dur_h = round((pat_slice.index[-1] - pat_slice.index[0]).total_seconds() / 3600, 2)
     except Exception:
-        duration_hours = 0
+        dur_h = 0
 
-    pattern_info = {
-        "nb_points": int(len(pattern)),
-        "start": pattern_start_date,
-        "end": pattern_end_date,
-        "duration_hours": duration_hours,
-        "amplitude": round(float(np.max(pattern) - np.min(pattern)), 4),
-        "mean": round(float(np.mean(pattern)), 4),
-        "std": round(float(np.std(pattern)), 4),
-        "min": round(float(np.min(pattern)), 4),
-        "max": round(float(np.max(pattern)), 4),
-        "energy_total": round(float(np.sum(pattern)), 2),
+    stats = {
+        "nb_points":      len(values),
+        "duration_hours": dur_h,
+        "amplitude":      round(float(np.ptp(arr)), 4),
+        "mean":           round(float(np.mean(arr)), 4),
+        "std":            round(float(np.std(arr)), 4),
+        "min":            round(float(np.min(arr)), 4),
+        "max":            round(float(np.max(arr)), 4),
     }
 
-    # ─── Monitoring : recherche ───
-    search_info = {
-        "series_length": int(len(series)),
-        "step": diagnostics["step"],
-        "total_positions_scanned": diagnostics["total_positions"],
-        "passed_amplitude_filter": diagnostics["passed_amplitude"],
-        "passed_variance_filter": diagnostics["passed_variance"],
-        "passed_correlation_filter": diagnostics["passed_correlation"],
-        "mass_computed": diagnostics["final_computed"],
-        "matches_returned": len(results),
-        "computation_time_sec": round(elapsed, 3),
-    }
+    # Compter les matches ≥80% pour info
+    match_count = int(request.get("match_count", 0))
 
-    # ─── Monitoring : distribution par similarité ───
-    # Calculer la similarité pour chaque match
-    if results:
-        scores_list = [r["score"] for r in results]
-        min_score = min(scores_list)
-        max_score = max(scores_list)
-        score_range = max_score - min_score if max_score > min_score else 1
+    pid = db.save_pattern(name, description, values, dates_list, stats, match_count)
+    return {"id": pid, "message": f"Pattern '{name}' sauvegardé."}
 
-        excellent = []  # 80-100%
-        good = []       # 50-79%
-        low = []        # <50%
 
-        for r in results:
-            sim = 95 - ((r["score"] - min_score) / score_range) * 55
-            r["similarity"] = round(sim, 1)
-            if sim >= 80:
-                excellent.append(r)
-            elif sim >= 50:
-                good.append(r)
-            else:
-                low.append(r)
+@router.get("/patterns")
+async def list_patterns_endpoint():
+    return {"patterns": db.list_patterns()}
 
-        distribution = {
-            "excellent": {"label": "80–100%", "count": len(excellent), "color": "#2ecc71"},
-            "good": {"label": "50–79%", "count": len(good), "color": "#3498db"},
-            "low": {"label": "<50%", "count": len(low), "color": "#f39c12"},
-        }
 
-        score_stats = {
-            "best_score": round(min_score, 4),
-            "worst_score": round(max_score, 4),
-            "avg_score": round(float(np.mean(scores_list)), 4),
-            "median_score": round(float(np.median(scores_list)), 4),
-            "std_score": round(float(np.std(scores_list)), 4),
-        }
+@router.get("/patterns/{pid}")
+async def get_pattern_endpoint(pid: int):
+    p = db.get_pattern(pid)
+    if not p:
+        return {"error": "Pattern introuvable."}
+    return p
+
+
+@router.delete("/patterns/{pid}")
+async def delete_pattern_endpoint(pid: int):
+    db.delete_pattern(pid)
+    return {"message": "Pattern supprimé."}
+
+
+@router.post("/patterns/{pid}/compare")
+async def compare_pattern_endpoint(pid: int, request: dict):
+    """Compare un pattern stocké contre une portion de la série."""
+    stored = db.get_pattern(pid)
+    if not stored:
+        return {"error": "Pattern introuvable."}
+
+    start = request.get("start")
+    end = request.get("end")
+
+    ref_values = np.array(stored["values"], dtype=float)
+
+    if start and end:
+        target = data.loc[start:end]["value"].values
     else:
-        distribution = {
-            "excellent": {"label": "80–100%", "count": 0, "color": "#2ecc71"},
-            "good": {"label": "50–79%", "count": 0, "color": "#3498db"},
-            "low": {"label": "<50%", "count": 0, "color": "#f39c12"},
-        }
-        score_stats = {}
+        target = series
 
-    return {
-        "matches": results,
-        "monitoring": {
-            "pattern_info": pattern_info,
-            "search_info": search_info,
+    def _compare():
+        matches, diag = search_pattern(target, ref_values, top_k=0)
+        results = []
+        target_dates = data.loc[start:end].index if start and end else dates
+        for m in matches:
+            end_idx = min(m["index"] + len(ref_values), len(target_dates) - 1)
+            results.append({
+                "start": str(target_dates[m["index"]]),
+                "end":   str(target_dates[end_idx]),
+                "score": float(m["score"]),
+            })
+        # Enrichir avec similarité
+        distribution, _ = _compute_distribution(results)
+        return {
+            "reference_pattern": stored["name"],
+            "matches": results,
             "distribution": distribution,
-            "score_stats": score_stats,
+            "total_matches": len(results),
         }
+
+    return await run_in_threadpool(_compare)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Utilitaires
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _compute_distribution(results):
+    if not results:
+        return (
+            {"excellent": {"label": "80–100%", "count": 0, "color": "#2ecc71"},
+             "good":      {"label": "50–79%",  "count": 0, "color": "#3498db"},
+             "low":       {"label": "<50%",     "count": 0, "color": "#f39c12"}},
+            {},
+        )
+
+    scores_list = [r["score"] for r in results]
+    min_s = min(scores_list)
+    max_s = max(scores_list)
+    rng = max_s - min_s if max_s > min_s else 1
+
+    excellent, good, low = 0, 0, 0
+    for r in results:
+        sim = 95 - ((r["score"] - min_s) / rng) * 55
+        r["similarity"] = round(sim, 1)
+        if sim >= 80:
+            excellent += 1
+        elif sim >= 50:
+            good += 1
+        else:
+            low += 1
+
+    distribution = {
+        "excellent": {"label": "80–100%", "count": excellent, "color": "#2ecc71"},
+        "good":      {"label": "50–79%",  "count": good,      "color": "#3498db"},
+        "low":       {"label": "<50%",     "count": low,       "color": "#f39c12"},
     }
+    score_stats = {
+        "best_score":   round(min_s, 4),
+        "worst_score":  round(max_s, 4),
+        "avg_score":    round(float(np.mean(scores_list)), 4),
+        "median_score": round(float(np.median(scores_list)), 4),
+        "std_score":    round(float(np.std(scores_list)), 4),
+    }
+    return distribution, score_stats

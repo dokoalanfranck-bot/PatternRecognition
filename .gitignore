@@ -41,6 +41,9 @@ Thumbs.db
 .cache
 *.cache
 
+# Database
+*.db
+
 # Misc
 .DS_Store
 *.pem

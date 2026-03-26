@@ -1,4 +1,4 @@
-import React, { useState, useCallback, memo } from "react"
+import React, { useState, useCallback, useEffect, useRef, memo } from "react"
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const PANEL_STYLE = {
@@ -64,8 +64,33 @@ const CATEGORY_COLORS = {
 // ─── Composant ────────────────────────────────────────────────────────────────
 const FilterPanel = memo(({ allMatches, onFilterChange }) => {
   const [open, setOpen] = useState(true)
-  const [minSimilarity, setMinSimilarity] = useState(0)   // % minimum de similarité
-  const [maxCount, setMaxCount] = useState("")            // nb max de rectangles ("" = tous)
+  const [minSimilarity, setMinSimilarity] = useState(80)  // % minimum par défaut
+  const [maxCount, setMaxCount] = useState("50")           // top 50 par défaut
+  const prevLenRef = useRef(0)
+
+  // Appliquer immédiatement dès qu'un contrôle change
+  const apply = useCallback((sim, count) => {
+    const filtered = allMatches
+      .filter(m => m.similarity >= sim)
+      .sort((a, b) => b.similarity - a.similarity)
+
+    const limited = count && !isNaN(count) && parseInt(count) > 0
+      ? filtered.slice(0, parseInt(count))
+      : filtered
+
+    onFilterChange(limited)
+  }, [allMatches, onFilterChange])
+
+  // Quand allMatches change (nouvelle recherche) → appliquer les filtres par défaut
+  useEffect(() => {
+    if (allMatches.length > 0 && allMatches.length !== prevLenRef.current) {
+      prevLenRef.current = allMatches.length
+      // Défaut : ≥80%, top 50
+      setMinSimilarity(80)
+      setMaxCount("50")
+      apply(80, "50")
+    }
+  }, [allMatches, apply])
 
   // Compteurs par catégorie (basés sur le filtre similarité en cours)
   const counts = {
@@ -77,19 +102,6 @@ const FilterPanel = memo(({ allMatches, onFilterChange }) => {
 
   // Nombre de matches qui passent le filtre similarité
   const passFilter = allMatches.filter(m => m.similarity >= minSimilarity).length
-
-  // Appliquer immédiatement dès qu'un contrôle change
-  const apply = useCallback((sim, count) => {
-    const filtered = allMatches
-      .filter(m => m.similarity >= sim)
-      .sort((a, b) => b.similarity - a.similarity)  // meilleurs en premier
-
-    const limited = count && !isNaN(count) && parseInt(count) > 0
-      ? filtered.slice(0, parseInt(count))
-      : filtered
-
-    onFilterChange(limited)
-  }, [allMatches, onFilterChange])
 
   const handleSimilarityChange = useCallback((e) => {
     const val = Math.min(100, Math.max(0, Number(e.target.value)))
@@ -150,15 +162,23 @@ const FilterPanel = memo(({ allMatches, onFilterChange }) => {
               Similarité minimum : <span style={{ color: "#6c5ce7" }}>{minSimilarity}%</span>
             </label>
             <input
-              type="number"
-              min={0} max={100} step={5}
+              type="range"
+              min={0} max={100} step={1}
               value={minSimilarity}
               onChange={handleSimilarityChange}
-              style={INPUT_STYLE}
-              placeholder="ex: 80"
+              style={{ width: "100%", accentColor: "#6c5ce7" }}
             />
-            <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>
-              → {passFilter} patterns passent ce seuil
+            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+              <input
+                type="number"
+                min={0} max={100} step={5}
+                value={minSimilarity}
+                onChange={handleSimilarityChange}
+                style={{ ...INPUT_STYLE, width: 70 }}
+              />
+              <span style={{ fontSize: 11, color: "#888" }}>
+                → {passFilter} patterns
+              </span>
             </div>
           </div>
 
