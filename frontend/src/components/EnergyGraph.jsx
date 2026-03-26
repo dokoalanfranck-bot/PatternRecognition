@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useEffect, useMemo, useCallback } from "react"
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import Plot from "react-plotly.js"
 import Plotly from "plotly.js/dist/plotly.min"
 import { detectPattern } from "../api/api"
@@ -250,15 +250,21 @@ export default function EnergyGraph({
         </div>
       )}
 
-      <Plot
-        ref={plotRef}
-        data={plotData}
-        layout={layout}
-        onSelected={handleSelected}
-        style={{ width: "100%", height: "520px" }}
-        useResizeHandler
-        config={PLOT_CFG}
-      />
+      {x.length > 0 ? (
+        <Plot
+          ref={plotRef}
+          data={plotData}
+          layout={layout}
+          onSelected={handleSelected}
+          style={{ width: "100%", height: "520px" }}
+          useResizeHandler
+          config={PLOT_CFG}
+        />
+      ) : (
+        <div style={{ width: "100%", height: "520px", display: "flex", alignItems: "center", justifyContent: "center", background: "#fafafa", borderRadius: 8, color: "#aaa", fontSize: 14 }}>
+          Chargement du graphe...
+        </div>
+      )}
 
       <FilterPanel allMatches={allMatches} onFilterChange={handleFilterChange} />
     </div>
