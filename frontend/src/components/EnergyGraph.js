@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import Plot from "react-plotly.js"
 import Plotly from "plotly.js/dist/plotly.min"
-import { detectPattern, computeAllScores } from "../api/api"
+import { detectPattern } from "../api/api"
+
+let abortController = null
 
 const COLORS = { high: "#2ecc71", mid: "#3498db", low: "#f39c12", selection: "#e74c3c" }
 
@@ -23,11 +25,11 @@ function enrichMatches(rawMatches) {
   }))
 }
 
-export default function EnergyGraph({ data, setMatches: setParentMatches, setAllScores, focusedMatch }) {
+export default function EnergyGraph({ data, setMatches: setParentMatches, setAllScores, allScores, setMonitoring, focusedMatch }) {
+  const [allMatches, setAllMatches] = useState([])
   const [matches, setMatches] = useState([])
-  const [allScores, setLocalAllScores] = useState([])
   const [selected, setSelected] = useState(null)
-  const [topK, setTopK] = useState(10)
+  const [activeFilter, setActiveFilter] = useState("all")
   const [focusIndex, setFocusIndex] = useState(-1)
   const [error, setError] = useState(null)
   const [searching, setSearching] = useState(false)
@@ -79,40 +81,62 @@ export default function EnergyGraph({ data, setMatches: setParentMatches, setAll
     setFocusIndex(-1)
   }
 
+  // ── Appliquer le filtre sur allMatches ──
+  const applyFilter = useCallback((all, filter) => {
+    let filtered
+    if (filter === "excellent") filtered = all.filter(m => m.similarity >= 80)
+    else if (filter === "good") filtered = all.filter(m => m.similarity >= 50 && m.similarity < 80)
+    else if (filter === "low") filtered = all.filter(m => m.similarity < 50)
+    else filtered = all
+    setMatches(filtered)
+    if (setParentMatches) setParentMatches(filtered)
+    setFocusIndex(-1)
+  }, [setParentMatches])
+
+  // Quand le filtre change, re-filtrer
+  useEffect(() => {
+    applyFilter(allMatches, activeFilter)
+  }, [activeFilter, allMatches, applyFilter])
+
+  const cancelSearch = useCallback(() => {
+    if (abortController) abortController.abort()
+    setSearching(false)
+  }, [])
+
   const handleSelected = async (event) => {
     if (!event?.range) return
     const [start, end] = event.range.x
     setSelected({ start, end })
     setFocusIndex(-1)
     setError(null)
-    setLocalAllScores([])
+    setActiveFilter("all")
     setSearching(true)
+    if (setMonitoring) setMonitoring(null)
+
+    // Annuler toute recherche précédente
+    if (abortController) abortController.abort()
+    abortController = new AbortController()
 
     try {
-      const result = await detectPattern(start, end, topK)
-      // Le backend peut renvoyer un champ error (ex: sélection trop courte)
+      const result = await detectPattern(start, end, 9999)
       if (result.error) {
         setError(result.error)
+        setAllMatches([])
         setMatches([])
         if (setParentMatches) setParentMatches([])
         if (setAllScores) setAllScores([])
+        if (setMonitoring) setMonitoring(null)
         return
       }
       const enriched = enrichMatches(result.matches || [])
+      setAllMatches(enriched)
       setMatches(enriched)
       if (setParentMatches) setParentMatches(enriched)
+      if (setMonitoring) setMonitoring(result.monitoring || null)
       if (!enriched.length) setError("Aucun pattern similaire trouvé.")
-
-      // Calcul des scores bruts pour toutes les sous-séquences (1000 premières)
-      computeAllScores(start, end, 1000)
-        .then(r => {
-          const scores = r.scores || []
-          setLocalAllScores(scores)
-          if (setAllScores) setAllScores(scores)
-        })
-        .catch(() => {})
     } catch {
       setError("Erreur lors de la détection. Essayez une sélection plus large.")
+      setAllMatches([])
       setMatches([])
       if (setParentMatches) setParentMatches([])
     } finally {
@@ -121,12 +145,11 @@ export default function EnergyGraph({ data, setMatches: setParentMatches, setAll
   }
 
   const shapes = []
-  const annotations = []
 
   const MAIN_Y0 = 0.12
 
   // Subsequence colored vertical lines in the paper strip [0, MAIN_Y0]
-  if (allScores.length && data.length) {
+  if (allScores && allScores.length && data.length) {
     const scoreVals = allScores.map(s => s.score)
     const minS = Math.min(...scoreVals), maxS = Math.max(...scoreVals), rng = maxS - minS || 1
     allScores.forEach(s => {
@@ -155,30 +178,18 @@ export default function EnergyGraph({ data, setMatches: setParentMatches, setAll
       type: "rect", x0: selected.start, x1: selected.end, y0: MAIN_Y0, y1: 1, yref: "paper",
       fillcolor: "rgba(231,76,60,0.25)", line: { width: 2, color: COLORS.selection }
     })
-    annotations.push({
-      x: selected.start, y: 1.05, yref: "paper",
-      text: "<b>Sélection</b>", showarrow: false, font: { size: 11, color: COLORS.selection }
-    })
   }
 
   matches.forEach((m, i) => {
     const color = getColor(m.similarity)
     const focused = i === focusIndex
+    if (!m.start || !m.end) return
     shapes.push({
       type: "rect", x0: m.start, x1: m.end, y0: MAIN_Y0, y1: 1, yref: "paper",
       fillcolor: color, opacity: focused ? 0.35 : 0.15,
       line: { width: focused ? 3 : 1, color, dash: focused ? "solid" : "dot" }
     })
-    annotations.push({
-      x: m.start, y: 1 - i * 0.055, yref: "paper",
-      text: `<b>#${i + 1}</b> ${m.similarity.toFixed(0)}%`,
-      showarrow: false, font: { size: focused ? 13 : 10, color },
-      bgcolor: "rgba(255,255,255,0.85)", borderpad: 2
-    })
   })
-
-  const xaxis = { rangeslider: { visible: true }, type: "date" }
-  const yaxis = { fixedrange: false, domain: [MAIN_Y0, 1] }
 
   const btn = { padding: "5px 12px", border: "1px solid #ddd", borderRadius: 4, background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }
 
@@ -193,25 +204,58 @@ export default function EnergyGraph({ data, setMatches: setParentMatches, setAll
         <span style={{ borderLeft: "1px solid #ddd", paddingLeft: 14 }}>
           <span style={{ color: "#2ecc71" }}>▲</span>–<span style={{ color: "#e74c3c" }}>▲</span> Sous-séquences (DTW)
         </span>
-        {searching && <span style={{ marginLeft: "auto", color: "#0984e3" }}>Recherche en cours...</span>}
+        {searching && (
+          <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ color: "#0984e3", animation: "pulse 1.2s infinite" }}>⏳ Recherche en cours...</span>
+            <button onClick={cancelSearch} style={{ padding: "2px 8px", border: "1px solid #e74c3c", borderRadius: 4, background: "#fff", color: "#e74c3c", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>Annuler</button>
+          </span>
+        )}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontSize: 12 }}>
-        <label style={{ color: "#555" }}>Nombre de résultats :</label>
-        <input
-          type="number"
-          min={1}
-          max={100}
-          value={topK}
-          onChange={e => setTopK(e.target.value === "" ? "" : Number(e.target.value))}
-          onBlur={e => {
-            const v = Math.max(1, Math.min(100, parseInt(e.target.value, 10) || 10))
-            setTopK(v)
-          }}
-          style={{ width: 70, padding: "3px 6px", border: "1px solid #ddd", borderRadius: 4, fontSize: 12 }}
-        />
-        <span style={{ color: "#aaa" }}>(1–100)</span>
-      </div>
+      {/* Filter buttons by similarity interval */}
+      {allMatches.length > 0 && (() => {
+        const countExcellent = allMatches.filter(m => m.similarity >= 80).length
+        const countGood = allMatches.filter(m => m.similarity >= 50 && m.similarity < 80).length
+        const countLow = allMatches.filter(m => m.similarity < 50).length
+        const filterBtn = (key, label, color, count) => {
+          const active = activeFilter === key
+          return (
+            <button
+              key={key}
+              onClick={() => setActiveFilter(activeFilter === key ? "all" : key)}
+              style={{
+                padding: "4px 12px", borderRadius: 16, fontSize: 12, fontWeight: 600,
+                border: `2px solid ${color}`, cursor: "pointer", transition: "all 0.2s",
+                background: active ? color : "#fff",
+                color: active ? "#fff" : color,
+                opacity: count === 0 ? 0.4 : 1,
+              }}
+              disabled={count === 0}
+            >
+              {label} ({count})
+            </button>
+          )
+        }
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontSize: 12 }}>
+            <span style={{ color: "#555", fontWeight: 600 }}>Filtrer :</span>
+            <button
+              onClick={() => setActiveFilter("all")}
+              style={{
+                padding: "4px 12px", borderRadius: 16, fontSize: 12, fontWeight: 600,
+                border: "2px solid #636e72", cursor: "pointer", transition: "all 0.2s",
+                background: activeFilter === "all" ? "#636e72" : "#fff",
+                color: activeFilter === "all" ? "#fff" : "#636e72",
+              }}
+            >
+              Tous ({allMatches.length})
+            </button>
+            {filterBtn("excellent", "80–100%", "#2ecc71", countExcellent)}
+            {filterBtn("good", "50–79%", "#3498db", countGood)}
+            {filterBtn("low", "<50%", "#f39c12", countLow)}
+          </div>
+        )
+      })()}
 
       {error && (
         <div style={{ padding: "6px 12px", marginBottom: 6, background: "#ffeaa7", borderRadius: 5, color: "#856404", fontSize: 12 }}>
@@ -235,13 +279,13 @@ export default function EnergyGraph({ data, setMatches: setParentMatches, setAll
       <Plot
         ref={plotRef}
         data={[
-          { x, y, type: "scattergl", mode: "lines+markers", name: "Consommation",
-            line: { width: 1, color: "#0984e3" },
-            marker: { size: 4, color: "#0984e3", opacity: 0.6 } }
+          { x, y, type: "scattergl", mode: "lines", name: "Consommation",
+            line: { width: 1.2, color: "#0984e3" } }
         ]}
         layout={{
-          dragmode: "select", shapes, annotations, uirevision: "stable",
-          xaxis, yaxis,
+          dragmode: "select", shapes, uirevision: "stable",
+          xaxis: { type: "date", showticklabels: true, tickfont: { size: 10 } },
+          yaxis: { fixedrange: false, domain: [0.12, 1], showticklabels: true, tickfont: { size: 10 } },
           margin: { t: 20, b: 30, l: 50, r: 20 },
           plot_bgcolor: "#fafafa",
           paper_bgcolor: "#fff"

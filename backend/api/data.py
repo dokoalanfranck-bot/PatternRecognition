@@ -1,7 +1,5 @@
 from fastapi import APIRouter
 from backend.services.data_loader import load_dataset
-from backend.services.downsampling import downsample_series
-import numpy as np
 
 router = APIRouter()
 
@@ -10,21 +8,24 @@ data = load_dataset()
 
 
 @router.get("/data")
-def get_data(points: int = 500):
+def get_data(page: int = 0, page_size: int = 50000):
     """
-    Retourne les données downsamplées avec le nombre de points demandé.
-    Utilise l'algorithme LTTB pour préserver au maximum la forme de la courbe.
-    
-    Args:
-        points: nombre de points cible (par défaut 500)
+    Pagination des données — charge tout sans downsampling.
+    page=0 → points 0-50k
+    page=1 → points 50k-100k, etc.
     """
-    # Limiter le nombre de points entre 50 et 5000
-    target_points = max(50, min(5000, points))
+    start_idx = page * page_size
+    end_idx = start_idx + page_size
     
-    # Obtenir les indices à garder
-    series_values = data["value"].values
-    selected_indices = downsample_series(series_values, target_points)
+    result = data.iloc[start_idx:end_idx].reset_index().to_dict(orient="records")
     
-    # Retourner les données downsamplées
-    downsampled = data.iloc[selected_indices].reset_index()
-    return downsampled.to_dict(orient="records")
+    total_points = len(data)
+    total_pages = (total_points + page_size - 1) // page_size
+    
+    return {
+        "points": result,
+        "page": page,
+        "page_size": page_size,
+        "total_points": total_points,
+        "total_pages": total_pages
+    }

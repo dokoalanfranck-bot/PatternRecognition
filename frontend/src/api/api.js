@@ -4,8 +4,8 @@ const API = axios.create({
   baseURL: "http://127.0.0.1:8000"
 })
 
-export const fetchData = async (points = 500) => {
-  const res = await API.get("/data", { params: { points } })
+export const fetchData = async (page = 0, pageSize = 50000) => {
+  const res = await API.get("/data", { params: { page, page_size: pageSize } })
   return res.data
 }
 
