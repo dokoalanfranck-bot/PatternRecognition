@@ -7,7 +7,6 @@ Permet de sélectionner visuellement un profil de consommation sur un graphe int
 
 ## Table des matières
 
-0. [📖 Guide utilisateur](#-guide-utilisateur) ← **Commencez ici pour utiliser l'app**
 1. [Stack technique](#stack-technique)
 2. [Installation](#installation)
 3. [Lancement](#lancement)
@@ -15,25 +14,11 @@ Permet de sélectionner visuellement un profil de consommation sur un graphe int
 5. [Architecture générale](#architecture-générale)
 6. [API REST](#api-rest)
 7. [Pipeline de traitement des données](#pipeline-de-traitement-des-données)
-8. [Algorithme de recherche MASS](#algorithme-de-recherche-mass)
+8. [Algorithme de recherche DTW](#algorithme-de-recherche-dtw)
 9. [Downsampling LTTB](#downsampling-lttb)
 10. [Composants Frontend](#composants-frontend)
 11. [Datasets](#datasets)
 12. [Corrections et historique](#corrections-et-historique)
-
----
-
-## 📖 Guide utilisateur
-
-**Vous êtes un utilisateur final ?** → Consultez [GUIDE_UTILISATEUR.md](GUIDE_UTILISATEUR.md) qui explique :
-
-✅ Comment lancer l'application  
-✅ Comment sélectionner et analyser un pattern  
-✅ Comment interpréter la distribution des résultats (excellent/bon/faible)  
-✅ Comment sauvegarder et gérer votre bibliothèque de patterns  
-✅ Conseils et bonnes pratiques  
-
-**Vous êtes un développeur ?** → Continuez avec cette documentation technique ci-dessous.
 
 ---
 
@@ -43,14 +28,15 @@ Permet de sélectionner visuellement un profil de consommation sur un graphe int
 |---|---|---|
 | Backend | Python, FastAPI, uvicorn | 3.10+ |
 | Traitement données | pandas, numpy | |
-| Algorithme similarité | STUMPY MASS (O(n log n)) | |
-| Base de données | SQLite 3 (patterns sauvegardés) | |
+| Algorithme DTW | `tslearn` (Dynamic Time Warping) | |
+| Pré-filtres statistiques | `scipy` (Pearson), numpy | |
 | Frontend | React, react-plotly.js, axios | React 19.2, Plotly.js 3.4 |
 | Visualisation | Plotly.js `scattergl` (WebGL) | |
+| Gestion données lourdes | Git LFS | |
 
 **Dépendances Python** (`requirements.txt`) :
 ```
-fastapi, uvicorn, pandas, numpy, stumpy
+fastapi, uvicorn, pandas, numpy, scipy, tslearn, dtaidistance
 ```
 
 **Dépendances Node.js** (principales dans `package.json`) :
@@ -138,9 +124,8 @@ Pfe_Project/
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── data_loader.py            # Chargement CSV, parsing dates, cache mémoire
-│   │   ├── database.py               # SQLite3 CRUD — sauvegarde/consultation patterns
-│   │   ├── dtw_similarity.py         # Algorithme STUMPY MASS (O(n log n))
-│   │   └── preprocessing.py          # Preprocessing données
+│   │   ├── dtw_similarity.py         # Algorithme DTW avec pré-filtres adaptatifs + fallback
+│   │   └── downsampling.py           # Algorithme LTTB (Largest-Triangle-Three-Buckets)
 │   │
 │   └── datasets/
 │       ├── C2 elect kw.csv           # Consommation électrique (kW) — ~1,8M points
@@ -401,104 +386,103 @@ data.reset_index().head(5000).to_dict(orient="records")
 
 ---
 
-## Algorithme de recherche MASS
+## Algorithme de recherche DTW
 
 ### Vue d'ensemble
 
-L'algorithme dans `dtw_similarity.py` utilise **STUMPY MASS** (Mueen's After Schema Aggregate) pour calculer le **distance profile** O(n log n) en temps quasi-linéaire.
+L'algorithme dans `dtw_similarity.py` utilise une **fenêtre glissante** sur toute la série (1,8M points), avec une cascade de **pré-filtres** du moins coûteux au plus coûteux pour éliminer rapidement les candidats non pertinents avant le calcul DTW (coûteux).
 
-MASS calcule la distance euclidienne entre un pattern et toute sous-série de la même longueur, de manière très efficace (motif de corrélation croisée + FFT).
-
-### Pipeline de détection
+### Pipeline de filtres (passe principale)
 
 ```
 Série (1,8M pts)
     │
-    ▼ STUMPY MASS : calcul distance profile complet
-    │   - Euclidean distance entre pattern et chaque sous-serie
-    │   - Temps : O(n log n) où n = longueur série
+    ▼ Fenêtre glissante (pas = 10% longueur pattern)
     │
-    ├─ Distance profile (1,8M - pattern_len) valeurs
+    ├─ ① Filtre amplitude ──── élimine si amp < 30% ou > 170% de l'amplitude du pattern
     │
-    ├─ Extraction non-overlappante
-    │   └─ Prend chaque minimum local + zone autour
-    │   └─ Élimine les doublons trop proches
+    ├─ ② Filtre variance ───── élimine si std(fenêtre) < 0.01
     │
-    ├─ Tri par distance (meilleur premier)
+    ├─ ③ Filtre corrélation ── élimine si pearsonr(pattern, fenêtre) < seuil adaptatif
+    │                           • > 500 points : seuil = 0.2
+    │                           • > 200 points : seuil = 0.3
+    │                           • ≤ 200 points : seuil = 0.4
     │
-    └─ Extraction des top_k matches (ou tous si top_k <= 0)
+    └─ ④ Score DTW ─────────── calcul tslearn.metrics.dtw() uniquement sur les survivants
 ```
 
-### Mode illimité
+### Pas de la fenêtre glissante
 
-Quand `top_k <= 0`, ALL non-overlapping matches sont retournés. Exemples :
-- Pattern de 100 points → jusqu'à ~18,000 matches trouvés
-- Pattern de 500 points → jusqu'à ~3,600 matches
-
-### Calcul de similarité
-
-La **similarité** est convertie à partir de la distance euclidienne :
-
-```
-distance_euclidienne = sqrt(sum((pattern[i] - serie[i])**2))
-normalized_distance = distance / (max_value - min_value)
-similarite_percent = (1 - normalized_distance) * 100
+```python
+step = max(1, int(pattern_len * 0.1))   # 10% de la longueur du pattern
 ```
 
-### Résultats
+### Seuil de corrélation adaptatif
 
-Chaque match contient :
-- **index** : position dans la série (numéro de point)
-- **date** : timestamp associé
-- **distance** : distance euclidienne brute (MASS)
-- **similarity** : similarité en % (0–100%)
+Le seuil de corrélation de Pearson s'adapte à la longueur du pattern :
+
+| Longueur pattern | Seuil corrélation | Raison |
+|---|---|---|
+| > 500 points | 0.2 | Longs patterns → plus de variabilité locale → seuil souple |
+| > 200 points | 0.3 | Intermédiaire |
+| ≤ 200 points | 0.4 | Courts patterns → corrélation plus stable → seuil strict |
+
+### Passe de fallback
+
+Si le nombre de résultats après la passe principale est inférieur à `top_k`, une **deuxième passe** est lancée avec des filtres relâchés :
+
+| Filtre | Passe principale | Passe fallback |
+|---|---|---|
+| Pas de la fenêtre | 10% du pattern | 20% du pattern |
+| Amplitude | ±70% (0.3x–1.7x) | ±100% (0.2x–2.0x) |
+| Variance | std ≥ 0.01 | std ≥ 0.01 |
+| Corrélation | Seuil adaptatif (0.2–0.4) | **Aucun filtre** |
+| Dédoublonnage | Non | Oui (distance < `pattern_len` → ignoré) |
+| Limite | top_k | top_k × 3 |
+
+### Détection de pattern plat
+
+Si l'amplitude du pattern sélectionné est < 0.01, la recherche est abandonnée immédiatement (évite les divisions par zéro et les résultats absurdes).
 
 ### Diagnostics retournés
 
-La fonction `search_pattern()` retourne un dict `diagnostics` avec :
+La fonction `search_pattern()` retourne un tuple `(results, diagnostics)` :
 
 ```python
 diagnostics = {
-    "total_positions": 17915,       # nombre de sous-séries scannées
-    "final_computed": 17915         # matches non-overlappants trouvés
+    "total_positions": 25020,       # nombre de fenêtres scannées
+    "passed_amplitude": 18200,      # passé le filtre amplitude
+    "passed_variance": 18150,       # passé le filtre variance
+    "passed_correlation": 5400,     # passé le filtre corrélation
+    "final_computed": 5400,         # DTW effectivement calculés
+    "step": 72                      # pas de la fenêtre
 }
 ```
 
 ---
 
-## Distribution des résultats
+## Downsampling LTTB
 
-Les résultats sont automatiquement catégorisés en 3 intervalles de **similarité** :
+Le module `downsampling.py` implémente l'algorithme **Largest-Triangle-Three-Buckets (LTTB)** pour réduire le nombre de points affichés tout en **préservant au maximum la forme** des courbes.
 
-| Catégorie | Plage | Signification |
-|---|---|---|
-| **Excellent** 🟩 | ≥ 80% | Très similaire — pattern robuste et fiable |
-| **Bon** 🟦 | 50–79% | Similaire — pattern acceptable |
-| **Faible** 🟨 | < 50% | Peu similaire — pattern peu discriminant |
+### Principe
 
-### Répartition
+1. Divise la série en N buckets de taille égale
+2. Pour chaque bucket, calcule l'aire du triangle formé par :
+   - Le point sélectionné du bucket précédent
+   - Chaque point candidat du bucket courant
+   - Le premier point du bucket suivant
+3. Sélectionne le point qui **maximise l'aire du triangle** (donc celui qui contribue le plus à la forme)
+4. Le premier et le dernier point sont toujours conservés
 
-Pour chaque pattern sauvegardé, l'application calcule et stocke la **distribution** :
+### Fonctions
 
-```json
-{
-  "excellent": 245,
-  "good": 123,
-  "low": 12
-}
+```python
+lttb(data: np.array, threshold: int) → np.array  # indices des points sélectionnés
+downsample_series(series: np.array, target_points=500) → np.array  # wrapper
 ```
 
-Cette distribution est visualisée dans la **Bibliothèque** (vue détail du pattern) comme :
-- Une **barre visuelle** (proportionnelle excellent/bon/faible)
-- **3 cards** affichant les comptages absolus et les pourcentages
-
-### Interprétation
-
-- **> 80% excellent** → Pattern de haute qualité, recommandé pour surveillance/alarmes
-- **10–30% excellent** → Pattern acceptable mais avec variations
-- **< 10% excellent** → Pattern peu fiable, à rejeter
-
-
+### Utilisation
 
 Le module est disponible et testé mais n'est pas utilisé par défaut dans `data.py` (qui utilise `head(5000)`).  
 Pour l'activer, modifier `data.py` :

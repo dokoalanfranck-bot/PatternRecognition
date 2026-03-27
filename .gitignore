@@ -47,3 +47,6 @@ Thumbs.db
 # Misc
 .DS_Store
 *.pem
+
+# Datasets
+datasets/
