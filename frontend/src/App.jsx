@@ -1,59 +1,28 @@
-﻿import React, { useState, useEffect, useCallback, memo } from "react"
+import React, { useState, useEffect, useCallback, memo } from "react"
 import { fetchData, computeAllScores } from "./api/api"
+import { Activity, ChevronLeft, ChevronRight, BarChart3, BookOpen, ArrowLeft, Loader } from "lucide-react"
 import EnergyGraph from "./components/EnergyGraph"
 import SimilarPatterns from "./components/SimilarPatterns"
 import ScoreDistribution from "./components/ScoreDistribution"
 import MonitoringPanel from "./components/MonitoringPanel"
 import PatternLibrary from "./components/PatternLibrary"
+import DatasetSelector from "./components/DatasetSelector"
 import "./App.css"
 
-const CONTAINER = {
-  fontFamily: "'Segoe UI', sans-serif",
-  padding: "0 24px 24px",
-  maxWidth: 1400,
-  margin: "0 auto"
-}
-const HEADER = { padding: "16px 0 8px", borderBottom: "1px solid #eee", marginBottom: 16 }
-const NAV = {
-  display: "flex", alignItems: "center", gap: 12,
-  marginBottom: 16, padding: "8px 12px",
-  background: "#f5f6fa", borderRadius: 6, fontSize: 13
-}
-const NAV_BTN = {
-  padding: "6px 12px", borderRadius: 4,
-  border: "1px solid #ddd", background: "#fff"
-}
-const TABS = {
-  display: "flex", gap: 0, marginBottom: 16,
-  borderBottom: "2px solid #eee"
-}
-
-function tabStyle(active) {
-  return {
-    padding: "10px 24px", cursor: "pointer", fontWeight: 600, fontSize: 13,
-    border: "none", background: "none",
-    borderBottom: active ? "3px solid #0984e3" : "3px solid transparent",
-    color: active ? "#0984e3" : "#888",
-    transition: "all 0.2s"
-  }
-}
-
 const NavBar = memo(({ page, pageInfo, loading, onPrev, onNext, onGoto }) => (
-  <div style={NAV}>
-    <button onClick={onPrev} disabled={page === 0 || loading}
-      style={{ ...NAV_BTN, cursor: page === 0 || loading ? "not-allowed" : "pointer" }}>
-      Precedent
+  <div className="nav-bar animate-in">
+    <button className="btn btn-sm" onClick={onPrev} disabled={page === 0 || loading}>
+      <ChevronLeft size={14} /> Précédent
     </button>
-    <span style={{ fontWeight: 600, color: "#2d3436" }}>
+    <span className="page-info">
       Page {page + 1} / {pageInfo.total_pages}
     </span>
-    <button onClick={onNext} disabled={page >= pageInfo.total_pages - 1 || loading}
-      style={{ ...NAV_BTN, cursor: page >= pageInfo.total_pages - 1 || loading ? "not-allowed" : "pointer" }}>
-      Suivant
+    <button className="btn btn-sm" onClick={onNext} disabled={page >= pageInfo.total_pages - 1 || loading}>
+      Suivant <ChevronRight size={14} />
     </button>
-    <span style={{ color: "#aaa", fontSize: 11 }}>|</span>
-    <label style={{ fontSize: 12, color: "#555" }}>
-      Aller a :
+    <span style={{ color: 'var(--border-default)' }}>|</span>
+    <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+      Aller à :
       <input type="number" min={1} max={pageInfo.total_pages}
         defaultValue={page + 1} key={page}
         onKeyDown={e => {
@@ -62,25 +31,29 @@ const NavBar = memo(({ page, pageInfo, loading, onPrev, onNext, onGoto }) => (
             if (!isNaN(v)) onGoto(v)
           }
         }}
-        style={{
-          width: 50, marginLeft: 6, padding: "3px 6px",
-          borderRadius: 4, border: "1px solid #ddd", fontSize: 12, textAlign: "center"
-        }}
       />
     </label>
-    <span style={{ marginLeft: "auto", color: "#666" }}>
-      {loading ? "Chargement..." : `${pageInfo.total_points.toLocaleString()} points au total`}
+    <span className="total-info">
+      {loading ? (
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Loader size={12} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
+          Chargement…
+        </span>
+      ) : (
+        `${pageInfo.total_points.toLocaleString()} points au total`
+      )}
     </span>
   </div>
 ))
 
 function App() {
+  const [dataset, setDataset] = useState(null)
   const [data, setData] = useState([])
   const [matches, setMatches] = useState([])
   const [allScores, setAllScores] = useState([])
   const [monitoring, setMonitoring] = useState(null)
   const [focusedMatch, setFocusedMatch] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [page, setPage] = useState(0)
   const [pageInfo, setPageInfo] = useState(null)
   const [scoreBusy, setScoreBusy] = useState(false)
@@ -89,11 +62,12 @@ function App() {
   const [libRefresh, setLibRefresh] = useState(0)
 
   useEffect(() => {
+    if (!dataset) return
     setLoading(true)
-    fetchData(page, 50000)
+    fetchData(page, 50000, dataset)
       .then(res => { setData(res.points); setPageInfo(res); setLoading(false) })
       .catch(() => setLoading(false))
-  }, [page])
+  }, [page, dataset])
 
   const handleMonitoring = useCallback((m) => {
     setMonitoring(m)
@@ -105,85 +79,120 @@ function App() {
     if (!lastSelection) return
     setScoreBusy(true)
     try {
-      const r = await computeAllScores(lastSelection.start, lastSelection.end, 1000)
+      const r = await computeAllScores(lastSelection.start, lastSelection.end, 1000, dataset)
       setAllScores(r.scores || [])
     } catch {}
     setScoreBusy(false)
-  }, [lastSelection])
+  }, [lastSelection, dataset])
 
-  const handlePatternSaved = useCallback(() => {
-    setLibRefresh(k => k + 1)
+  const handlePatternSaved = useCallback(() => { setLibRefresh(k => k + 1) }, [])
+
+  const handleSelectDataset = useCallback((filename) => {
+    setDataset(filename)
+    setPage(0)
+    setData([])
+    setMatches([])
+    setAllScores([])
+    setMonitoring(null)
+    setPageInfo(null)
+    setTab("analyse")
+  }, [])
+
+  const handleBackToSelector = useCallback(() => {
+    setDataset(null)
+    setData([])
+    setMatches([])
+    setAllScores([])
+    setMonitoring(null)
+    setPageInfo(null)
   }, [])
 
   const showScoreButton = matches.length > 0 && allScores.length === 0
 
-  return (
-    <div style={CONTAINER}>
-      <header style={HEADER}>
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, color: "#2d3436" }}>
-          Detection de Patterns Energetiques
-        </h1>
-        <p style={{ margin: "4px 0 0", fontSize: 13, color: "#888" }}>
-          Analysez les motifs, sauvegardez les meilleurs, comparez en temps reel
-        </p>
-      </header>
+  if (!dataset) {
+    return <DatasetSelector onSelect={handleSelectDataset} />
+  }
 
-      {/* Tabs */}
-      <div style={TABS}>
-        <button style={tabStyle(tab === "analyse")} onClick={() => setTab("analyse")}>
-          Analyse
+  return (
+    <div style={{ minHeight: '100vh' }}>
+      {/* ── Top Bar ── */}
+      <div className="topbar">
+        <button className="btn btn-ghost" onClick={handleBackToSelector} style={{ gap: 6 }}>
+          <ArrowLeft size={16} /> Datasets
         </button>
-        <button style={tabStyle(tab === "library")} onClick={() => setTab("library")}>
-          Bibliotheque ({libRefresh >= 0 ? "" : ""})
-        </button>
+        <div className="topbar-divider" />
+        <div className="topbar-logo">
+          <Activity size={20} />
+          Pattern Recognition
+        </div>
+        <span className="topbar-dataset">{dataset}</span>
+
+        <div className="tab-pills">
+          <button className={`tab-pill ${tab === "analyse" ? "active" : ""}`}
+            onClick={() => setTab("analyse")}>
+            <BarChart3 size={14} /> Analyse
+          </button>
+          <button className={`tab-pill ${tab === "library" ? "active" : ""}`}
+            onClick={() => setTab("library")}>
+            <BookOpen size={14} /> Bibliothèque
+          </button>
+        </div>
       </div>
 
-      {tab === "analyse" && (
-        <>
-          {pageInfo && (
-            <NavBar page={page} pageInfo={pageInfo} loading={loading}
-              onPrev={() => setPage(p => Math.max(0, p - 1))}
-              onNext={() => setPage(p => p + 1)}
-              onGoto={setPage}
+      {/* ── Main Content ── */}
+      <div style={{ maxWidth: 1440, margin: '0 auto', padding: '20px 24px 40px' }}>
+        {tab === "analyse" && (
+          <div className="animate-in">
+            {pageInfo && (
+              <NavBar page={page} pageInfo={pageInfo} loading={loading}
+                onPrev={() => setPage(p => Math.max(0, p - 1))}
+                onNext={() => setPage(p => p + 1)}
+                onGoto={setPage}
+              />
+            )}
+
+            <EnergyGraph
+              data={data}
+              setMatches={setMatches}
+              setMonitoring={handleMonitoring}
+              focusedMatch={focusedMatch}
+              dataset={dataset}
             />
-          )}
 
-          <EnergyGraph
-            data={data}
-            setMatches={setMatches}
-            setMonitoring={handleMonitoring}
-            focusedMatch={focusedMatch}
-          />
+            <MonitoringPanel
+              monitoring={monitoring}
+              matchCount={matches.length}
+              onPatternSaved={handlePatternSaved}
+              dataset={dataset}
+            />
 
-          <MonitoringPanel
-            monitoring={monitoring}
-            matchCount={matches.length}
-            onPatternSaved={handlePatternSaved}
-          />
+            {showScoreButton && (
+              <div style={{ margin: '16px 0', textAlign: 'center' }}>
+                <button className="btn btn-primary btn-lg" onClick={handleComputeScores}
+                  disabled={scoreBusy} style={{ minWidth: 280 }}>
+                  {scoreBusy ? (
+                    <>
+                      <Loader size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                      Calcul en cours…
+                    </>
+                  ) : (
+                    "Calculer la distribution des scores"
+                  )}
+                </button>
+              </div>
+            )}
 
-          {showScoreButton && (
-            <div style={{ margin: "12px 0", textAlign: "center" }}>
-              <button onClick={handleComputeScores} disabled={scoreBusy}
-                style={{
-                  padding: "8px 20px", borderRadius: 6,
-                  border: "2px solid #6c5ce7", fontSize: 13, fontWeight: 600,
-                  background: scoreBusy ? "#dfe6e9" : "#6c5ce7",
-                  color: scoreBusy ? "#636e72" : "#fff",
-                  cursor: scoreBusy ? "wait" : "pointer"
-                }}>
-                {scoreBusy ? "Calcul en cours..." : "Calculer la distribution des scores"}
-              </button>
-            </div>
-          )}
+            <ScoreDistribution allScores={allScores} matches={matches} />
+            <SimilarPatterns matches={matches} onNavigate={setFocusedMatch} />
+          </div>
+        )}
 
-          <ScoreDistribution allScores={allScores} matches={matches} />
-          <SimilarPatterns matches={matches} onNavigate={setFocusedMatch} />
-        </>
-      )}
-
-      {tab === "library" && (
-        <PatternLibrary refreshKey={libRefresh} />
-      )}
+        {tab === "library" && (
+          <div className="animate-in">
+            <PatternLibrary refreshKey={libRefresh} />
+          </div>
+        )}
+      </div>
     </div>
   )
 }

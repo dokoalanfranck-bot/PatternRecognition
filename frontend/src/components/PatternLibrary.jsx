@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo, memo } from "react"
 import Plot from "react-plotly.js"
 import { listPatterns, getPattern, deletePattern } from "../api/api"
+import {
+  BookOpen, ArrowLeft, Trash2, Clock, TrendingUp, TrendingDown,
+  Activity, Sigma, Target, Award, Minus, RefreshCw, ChevronRight,
+  Loader, AlertCircle, FolderOpen, BarChart3
+} from "lucide-react"
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmt(v, d = 2) {
   if (v === undefined || v === null) return "-"
   return typeof v === "number" ? v.toLocaleString("fr-FR", { maximumFractionDigits: d }) : v
@@ -22,40 +26,18 @@ function formatDateStr(d) {
   })
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-const SEC = {
-  background: "#fff", border: "1px solid #e8e8e8",
-  borderRadius: 10, padding: "14px 18px", marginBottom: 12
-}
-const CARD_BASE = {
-  border: "1px solid #e8e8e8", borderRadius: 10,
-  padding: "14px 18px", background: "#fff",
-  cursor: "pointer", transition: "all 0.2s",
-}
-const STAT_CARD = (color) => ({
-  background: "#fff", border: "1px solid #e8e8e8", borderRadius: 8,
-  padding: "10px 14px", minWidth: 120, flex: "1 1 120px",
-  borderLeft: `4px solid ${color}`
-})
-const BADGE = (bg, color) => ({
-  display: "inline-flex", alignItems: "center", gap: 4,
-  padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700,
-  background: bg, color
-})
 const PLOT_CFG = { displayModeBar: false, staticPlot: false, scrollZoom: false }
 
-// ─── StatCard ─────────────────────────────────────────────────────────────────
-const StatCard = memo(({ label, value, unit, color, icon }) => (
-  <div style={STAT_CARD(color || "#0984e3")}>
-    <div style={{ fontSize: 10, color: "#888", marginBottom: 2 }}>{icon} {label}</div>
-    <div style={{ fontSize: 18, fontWeight: 700, color: color || "#2d3436" }}>
+const StatCard = memo(({ label, value, unit, colorClass, icon: Icon }) => (
+  <div className={`stat-card ${colorClass || 'stat-card-indigo'}`}>
+    <div className="stat-label">{Icon && <Icon size={11} />} {label}</div>
+    <div className="stat-value">
       {value}
-      {unit && <span style={{ fontSize: 10, fontWeight: 400, color: "#aaa", marginLeft: 3 }}>{unit}</span>}
+      {unit && <span className="stat-unit">{unit}</span>}
     </div>
   </div>
 ))
 
-// ─── Mini sparkline for the list card ─────────────────────────────────────────
 const MiniSparkline = memo(({ values }) => {
   if (!values || values.length < 2) return null
   const min = Math.min(...values), max = Math.max(...values)
@@ -68,28 +50,24 @@ const MiniSparkline = memo(({ values }) => {
   }).join(" ")
   return (
     <svg width={w} height={h} style={{ display: "block" }}>
-      <polyline points={points} fill="none" stroke="#6c5ce7" strokeWidth="1.5" strokeLinejoin="round" />
-      <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stopColor="#6c5ce7" stopOpacity="0.2" />
-        <stop offset="100%" stopColor="#6c5ce7" stopOpacity="0" />
-      </linearGradient>
-      <polyline
-        points={`${pad},${h} ${points} ${w - pad},${h}`}
-        fill="url(#sparkGrad)" stroke="none"
-      />
+      <defs>
+        <linearGradient id="sparkGradDark" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#818cf8" stopOpacity="0.3" />
+          <stop offset="100%" stopColor="#818cf8" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <polyline points={`${pad},${h} ${points} ${w - pad},${h}`}
+        fill="url(#sparkGradDark)" stroke="none" />
+      <polyline points={points} fill="none" stroke="#818cf8" strokeWidth="1.5" strokeLinejoin="round" />
     </svg>
   )
 })
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Pattern Detail View
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// ─── Distribution bar (visual) ────────────────────────────────────────────────
 const DistributionSection = memo(({ dist, matchCount }) => {
   if (!dist) {
     return (
-      <div style={{ ...SEC, textAlign: "center", color: "#aaa", fontSize: 12, padding: 20 }}>
+      <div className="section" style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 24 }}>
+        <AlertCircle size={20} style={{ opacity: 0.4, margin: '0 auto 8px', display: 'block' }} />
         Distribution non disponible (pattern sauvegardé avant cette fonctionnalité).
         <br />Resauvegardez le pattern pour enregistrer la distribution.
       </div>
@@ -102,33 +80,28 @@ const DistributionSection = memo(({ dist, matchCount }) => {
   const total = excellent + good + low
 
   const segments = [
-    { label: "Excellent (≥80%)", count: excellent, color: "#2ecc71", bg: "#eafaf1" },
-    { label: "Bon (50–79%)",     count: good,      color: "#3498db", bg: "#ebf5fb" },
-    { label: "Faible (<50%)",    count: low,       color: "#f39c12", bg: "#fef9e7" },
+    { label: "Excellent (≥80%)", count: excellent, color: "var(--accent-emerald)", raw: "#34d399", icon: Award },
+    { label: "Bon (50–79%)", count: good, color: "var(--accent-blue)", raw: "#60a5fa", icon: Target },
+    { label: "Faible (<50%)", count: low, color: "var(--accent-amber)", raw: "#fbbf24", icon: Minus },
   ]
 
   return (
-    <div style={SEC}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#2d3436", marginBottom: 12 }}>
-        Répartition des occurrences
-        <span style={{ fontWeight: 400, color: "#aaa", fontSize: 12, marginLeft: 8 }}>
-          {total} patterns trouvés au total
+    <div className="section">
+      <h4 className="section-title"><BarChart3 size={15} /> Répartition des occurrences
+        <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 12, marginLeft: 8 }}>
+          {total} patterns trouvés
         </span>
-      </div>
+      </h4>
 
-      {/* Bar */}
       {total > 0 && (
-        <div style={{ display: "flex", borderRadius: 8, overflow: "hidden", height: 36, marginBottom: 14 }}>
+        <div className="distribution-bar" style={{ marginBottom: 14 }}>
           {segments.map(s => {
             const pct = (s.count / total) * 100
             if (pct === 0) return null
             return (
               <div key={s.label} style={{
-                width: `${pct}%`, background: s.color,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                color: "#fff", fontSize: 12, fontWeight: 700,
+                width: `${pct}%`, background: s.raw,
                 minWidth: s.count > 0 ? 36 : 0,
-                transition: "width 0.3s"
               }}>
                 {s.count}
               </div>
@@ -137,18 +110,19 @@ const DistributionSection = memo(({ dist, matchCount }) => {
         </div>
       )}
 
-      {/* Cards per interval */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
         {segments.map(s => {
           const pct = total > 0 ? ((s.count / total) * 100).toFixed(1) : "0"
+          const SIcon = s.icon
           return (
             <div key={s.label} style={{
-              background: s.bg, borderRadius: 10, padding: "14px 16px",
-              borderLeft: `4px solid ${s.color}`, textAlign: "center"
+              background: `${s.raw}0d`, borderRadius: 10, padding: '14px 16px',
+              borderLeft: `4px solid ${s.raw}`, textAlign: 'center',
             }}>
-              <div style={{ fontSize: 28, fontWeight: 800, color: s.color }}>{s.count}</div>
-              <div style={{ fontSize: 11, color: "#555", marginTop: 4, fontWeight: 600 }}>{s.label}</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: s.color, marginTop: 4 }}>{pct}%</div>
+              <SIcon size={16} style={{ color: s.raw, marginBottom: 4 }} />
+              <div style={{ fontSize: 26, fontWeight: 800, color: s.raw }}>{s.count}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4, fontWeight: 600 }}>{s.label}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: s.raw, marginTop: 4 }}>{pct}%</div>
             </div>
           )
         })}
@@ -180,7 +154,6 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
     } catch { setDeleting(false) }
   }, [patternSummary.id, onDeleted])
 
-  // ── Derived stats (only essentials) ──
   const computed = useMemo(() => {
     if (!detail?.values?.length) return null
     const v = detail.values
@@ -193,16 +166,15 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
     return { mean, std, min, max, amplitude, n }
   }, [detail])
 
-  // ── Plotly: main curve ──
   const curveData = useMemo(() => {
     if (!detail?.values?.length) return []
     const hasDates = detail.dates?.length === detail.values.length
     const x = hasDates ? detail.dates : detail.values.map((_, i) => i)
     return [{
       x, y: detail.values, type: "scattergl", mode: "lines",
-      line: { width: 2, color: "#6c5ce7", shape: "spline" },
+      line: { width: 2, color: "#818cf8", shape: "spline" },
       fill: "tozeroy",
-      fillcolor: "rgba(108,92,231,0.08)",
+      fillcolor: "rgba(129,140,248,0.08)",
       hovertemplate: hasDates
         ? "%{x|%d %b %H:%M}<br><b>%{y:.2f} kW</b><extra></extra>"
         : "Point %{x}<br><b>%{y:.2f} kW</b><extra></extra>"
@@ -215,28 +187,33 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
       height: 300, margin: { t: 10, b: 40, l: 55, r: 20 },
       xaxis: {
         type: detail?.dates?.length ? "date" : "linear",
-        showgrid: false, tickfont: { size: 10 }
+        showgrid: false, tickfont: { size: 10, color: "#94a3b8" },
+        tickcolor: "#334155", linecolor: "#334155",
       },
       yaxis: {
-        showgrid: true, gridcolor: "#f0f0f0", tickfont: { size: 10 },
-        title: { text: "kW", font: { size: 11, color: "#666" } }
+        showgrid: true, gridcolor: "rgba(148,163,184,0.08)",
+        tickfont: { size: 10, color: "#94a3b8" },
+        tickcolor: "#334155", linecolor: "#334155",
+        title: { text: "kW", font: { size: 11, color: "#64748b" } },
+        zeroline: false,
       },
-      plot_bgcolor: "#fafafa", paper_bgcolor: "#fff",
+      plot_bgcolor: "transparent", paper_bgcolor: "transparent",
+      font: { family: "Inter, sans-serif" },
       shapes: [
         { type: "line", x0: 0, x1: 1, xref: "paper", y0: computed.mean, y1: computed.mean,
-          line: { color: "#0984e3", width: 1.5, dash: "dash" } },
+          line: { color: "#818cf8", width: 1.5, dash: "dash" } },
       ],
       annotations: [
         { x: 1, xref: "paper", y: computed.mean, text: `μ = ${fmt(computed.mean)} kW`,
-          showarrow: false, font: { size: 10, color: "#0984e3" }, xanchor: "left", xshift: 4 }
+          showarrow: false, font: { size: 10, color: "#818cf8" }, xanchor: "left", xshift: 4 }
       ]
     }
   }, [computed, detail])
 
   if (loading) {
     return (
-      <div style={{ textAlign: "center", padding: "60px 0", color: "#aaa" }}>
-        <div style={{ fontSize: 28, marginBottom: 8 }}>⏳</div>
+      <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
+        <Loader size={28} className="spinner" style={{ margin: '0 auto 12px', display: 'block' }} />
         Chargement du pattern...
       </div>
     )
@@ -244,11 +221,12 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
 
   if (!detail || !computed) {
     return (
-      <div style={{ textAlign: "center", padding: "40px 0", color: "#e74c3c" }}>
+      <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--accent-rose)' }}>
+        <AlertCircle size={28} style={{ margin: '0 auto 8px', display: 'block' }} />
         Erreur : impossible de charger le pattern.
         <br />
-        <button onClick={onBack} style={{ marginTop: 12, padding: "6px 16px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer" }}>
-          Retour
+        <button className="btn" onClick={onBack} style={{ marginTop: 12 }}>
+          <ArrowLeft size={14} /> Retour
         </button>
       </div>
     )
@@ -257,159 +235,138 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
   const st = detail.stats || {}
 
   return (
-    <div>
-      {/* ── Header ── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-        <button onClick={onBack} style={{
-          padding: "6px 14px", borderRadius: 6, border: "1px solid #ddd",
-          background: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600
-        }}>
-          ← Retour
+    <div className="animate-in">
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <button className="btn btn-ghost" onClick={onBack}>
+          <ArrowLeft size={16} /> Retour
         </button>
-        <div style={{ flex: 1 }}>
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#2d3436" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: 'var(--text-primary)' }}>
             {detail.name}
           </h2>
           {detail.description && (
-            <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{detail.description}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{detail.description}</div>
           )}
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ fontSize: 11, color: "#aaa" }}>
-            {formatDate(detail.created_at)}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <Clock size={12} /> {formatDate(detail.created_at)}
           </span>
           {!confirming ? (
-            <button onClick={() => setConfirming(true)} style={{
-              padding: "5px 12px", borderRadius: 6, border: "1px solid #e74c3c",
-              background: "#fff", color: "#e74c3c", fontSize: 11, cursor: "pointer", fontWeight: 600
-            }}>
-              Supprimer
+            <button className="btn btn-danger" onClick={() => setConfirming(true)}>
+              <Trash2 size={13} /> Supprimer
             </button>
           ) : (
-            <div style={{ display: "flex", gap: 4 }}>
-              <button onClick={handleDelete} disabled={deleting} style={{
-                padding: "5px 12px", borderRadius: 6, border: "none",
-                background: "#e74c3c", color: "#fff", fontSize: 11, cursor: "pointer", fontWeight: 700
-              }}>
-                {deleting ? "..." : "Confirmer"}
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button className="btn btn-danger" onClick={handleDelete} disabled={deleting}>
+                {deleting ? <Loader size={13} className="spinner" /> : "Confirmer"}
               </button>
-              <button onClick={() => setConfirming(false)} style={{
-                padding: "5px 12px", borderRadius: 6, border: "1px solid #ddd",
-                background: "#fff", fontSize: 11, cursor: "pointer"
-              }}>
-                Annuler
-              </button>
+              <button className="btn" onClick={() => setConfirming(false)}>Annuler</button>
             </div>
           )}
         </div>
       </div>
 
-      {/* ── Key metrics ── */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
-        <StatCard label="Points" value={fmt(computed.n, 0)} color="#6c5ce7" icon="📐" />
-        <StatCard label="Durée" value={fmt(st.duration_hours)} unit="h" color="#0984e3" icon="⏱" />
-        <StatCard label="Moyenne" value={fmt(computed.mean)} unit="kW" color="#0984e3" icon="μ" />
-        <StatCard label="Écart-type" value={fmt(computed.std)} unit="kW" color="#6c5ce7" icon="σ" />
-        <StatCard label="Min" value={fmt(computed.min)} unit="kW" color="#00b894" icon="▼" />
-        <StatCard label="Max" value={fmt(computed.max)} unit="kW" color="#d63031" icon="▲" />
-        <StatCard label="Amplitude" value={fmt(computed.amplitude)} unit="kW" color="#e17055" icon="↕" />
+      {/* Key metrics */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+        <StatCard label="Points" value={fmt(computed.n, 0)} colorClass="stat-card-violet" icon={Activity} />
+        <StatCard label="Durée" value={fmt(st.duration_hours)} unit="h" colorClass="stat-card-indigo" icon={Clock} />
+        <StatCard label="Moyenne" value={fmt(computed.mean)} unit="kW" colorClass="stat-card-blue" icon={TrendingUp} />
+        <StatCard label="Écart-type" value={fmt(computed.std)} unit="kW" colorClass="stat-card-violet" icon={Sigma} />
+        <StatCard label="Min" value={fmt(computed.min)} unit="kW" colorClass="stat-card-emerald" icon={TrendingDown} />
+        <StatCard label="Max" value={fmt(computed.max)} unit="kW" colorClass="stat-card-rose" icon={TrendingUp} />
+        <StatCard label="Amplitude" value={fmt(computed.amplitude)} unit="kW" colorClass="stat-card-amber" icon={Activity} />
       </div>
 
-      {/* ── Pattern curve ── */}
-      <div style={{ ...SEC, padding: "10px 14px" }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#2d3436", marginBottom: 6 }}>
-          Forme du pattern
-          <span style={{ fontWeight: 400, color: "#aaa", fontSize: 11, marginLeft: 8 }}>
+      {/* Pattern curve */}
+      <div className="section">
+        <h4 className="section-title">
+          <Activity size={15} /> Forme du pattern
+          <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 11, marginLeft: 8 }}>
             Ligne pointillée = moyenne
           </span>
-        </div>
+        </h4>
         {curveData.length > 0 && (
           <Plot data={curveData} layout={curveLayout} config={PLOT_CFG}
             style={{ width: "100%" }} useResizeHandler />
         )}
       </div>
 
-      {/* ── Distribution des occurrences par intervalle ── */}
+      {/* Distribution */}
       <DistributionSection dist={st.distribution} matchCount={detail.match_count} />
 
-      {/* ── Temporal info ── */}
-      <div style={{ ...SEC, padding: "10px 16px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "6px 20px", fontSize: 12, color: "#555" }}>
-          <div><span style={{ color: "#888" }}>Début :</span> <strong>{formatDateStr(detail.dates?.[0])}</strong></div>
-          <div><span style={{ color: "#888" }}>Fin :</span> <strong>{formatDateStr(detail.dates?.[detail.dates.length - 1])}</strong></div>
-          <div><span style={{ color: "#888" }}>Sauvegardé :</span> <strong>{formatDate(detail.created_at)}</strong></div>
+      {/* Temporal info */}
+      <div className="section">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px 20px', fontSize: 12 }}>
+          <div><span style={{ color: 'var(--text-muted)' }}>Début :</span> <strong style={{ color: 'var(--text-primary)' }}>{formatDateStr(detail.dates?.[0])}</strong></div>
+          <div><span style={{ color: 'var(--text-muted)' }}>Fin :</span> <strong style={{ color: 'var(--text-primary)' }}>{formatDateStr(detail.dates?.[detail.dates.length - 1])}</strong></div>
+          <div><span style={{ color: 'var(--text-muted)' }}>Sauvegardé :</span> <strong style={{ color: 'var(--text-primary)' }}>{formatDate(detail.created_at)}</strong></div>
         </div>
       </div>
     </div>
   )
 })
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Pattern List Card (compact, with sparkline)
-// ═══════════════════════════════════════════════════════════════════════════════
 const PatternCard = memo(({ pattern, onClick }) => {
   const st = pattern.stats || {}
   return (
-    <div
-      onClick={() => onClick(pattern)}
-      style={{
-        ...CARD_BASE,
-        borderLeft: "4px solid #6c5ce7",
-        display: "flex", alignItems: "center", gap: 14
-      }}
-      onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 4px 16px rgba(108,92,231,0.15)"; e.currentTarget.style.borderColor = "#6c5ce7" }}
-      onMouseLeave={e => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.borderColor = "#e8e8e8" }}
-    >
-      {/* Sparkline preview */}
+    <div onClick={() => onClick(pattern)} className="glass-card-interactive" style={{
+      borderLeft: '3px solid var(--accent-indigo)',
+      display: 'flex', alignItems: 'center', gap: 14,
+      cursor: 'pointer',
+    }}>
       <div style={{ flexShrink: 0 }}>
         {pattern._preview ? (
           <MiniSparkline values={pattern._preview} />
         ) : (
-          <div style={{ width: 120, height: 32, background: "#f5f6fa", borderRadius: 4 }} />
+          <div className="skeleton" style={{ width: 120, height: 32, borderRadius: 4 }} />
         )}
       </div>
 
-      {/* Info */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#2d3436", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+          <span style={{
+            fontSize: 15, fontWeight: 700, color: 'var(--text-primary)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
             {pattern.name}
           </span>
-          <span style={BADGE("#f0edff", "#6c5ce7")}>{pattern.match_count} occ.</span>
+          <span className="badge" style={{ background: 'rgba(129,140,248,0.15)', color: 'var(--accent-indigo)' }}>
+            {pattern.match_count} occ.
+          </span>
         </div>
         {pattern.description && (
-          <div style={{ fontSize: 11, color: "#888", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div style={{
+            fontSize: 11, color: 'var(--text-muted)', marginBottom: 4,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
             {pattern.description}
           </div>
         )}
-        <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#555", marginTop: 4 }}>
-          <span>⏱ {fmt(st.duration_hours)} h</span>
+        <div style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--text-secondary)' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Clock size={10} /> {fmt(st.duration_hours)} h</span>
           <span>μ = {fmt(st.mean)} kW</span>
           <span>σ = {fmt(st.std)} kW</span>
-          <span>↕ {fmt(st.amplitude)} kW</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Activity size={10} /> {fmt(st.amplitude)} kW</span>
         </div>
       </div>
 
-      {/* Arrow */}
-      <div style={{ fontSize: 18, color: "#bbb", flexShrink: 0 }}>›</div>
+      <ChevronRight size={18} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
     </div>
   )
 })
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Main PatternLibrary
-// ═══════════════════════════════════════════════════════════════════════════════
 const PatternLibrary = memo(({ refreshKey }) => {
   const [patterns, setPatterns] = useState([])
   const [loading, setLoading] = useState(false)
-  const [selected, setSelected] = useState(null) // null = list view, object = detail view
+  const [selected, setSelected] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const res = await listPatterns()
       const list = res.patterns || []
-      // Fetch a lightweight preview (first N values) for sparklines
       const withPreviews = await Promise.all(
         list.map(async (p) => {
           try {
@@ -430,7 +387,6 @@ const PatternLibrary = memo(({ refreshKey }) => {
     load()
   }, [load])
 
-  // ── Detail view ──
   if (selected) {
     return (
       <div style={{ marginTop: 16 }}>
@@ -443,38 +399,43 @@ const PatternLibrary = memo(({ refreshKey }) => {
     )
   }
 
-  // ── List view ──
   return (
-    <div style={{ marginTop: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-        <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#2d3436" }}>
+    <div style={{ marginTop: 16 }} className="animate-in">
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        marginBottom: 16, paddingBottom: 10,
+        borderBottom: '1px solid var(--border-subtle)',
+      }}>
+        <h3 style={{
+          margin: 0, fontSize: 18, fontWeight: 700, color: 'var(--text-primary)',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <BookOpen size={18} style={{ color: 'var(--accent-indigo)' }} />
           Bibliothèque de patterns
-          <span style={{ fontWeight: 400, color: "#aaa", fontSize: 13, marginLeft: 8 }}>
+          <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 13, marginLeft: 4 }}>
             {patterns.length} pattern{patterns.length > 1 ? "s" : ""} sauvegardé{patterns.length > 1 ? "s" : ""}
           </span>
         </h3>
-        <button onClick={load} disabled={loading} style={{
-          padding: "6px 16px", borderRadius: 6, border: "1px solid #ddd",
-          background: "#fff", fontSize: 12, cursor: "pointer", fontWeight: 600
-        }}>
-          {loading ? "Chargement..." : "⟳ Rafraîchir"}
+        <button className="btn" onClick={load} disabled={loading}>
+          {loading ? <Loader size={14} className="spinner" /> : <RefreshCw size={14} />}
+          {loading ? "Chargement…" : "Rafraîchir"}
         </button>
       </div>
 
       {patterns.length === 0 && !loading && (
         <div style={{
-          textAlign: "center", padding: "50px 20px", color: "#aaa", fontSize: 14,
-          background: "#fafafa", borderRadius: 12, border: "2px dashed #e0e0e0"
+          textAlign: 'center', padding: '50px 20px', color: 'var(--text-muted)', fontSize: 14,
+          borderRadius: 12, border: '2px dashed var(--border-subtle)',
         }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>📂</div>
-          <div style={{ fontWeight: 600, color: "#888" }}>Bibliothèque vide</div>
+          <FolderOpen size={40} style={{ opacity: 0.3, margin: '0 auto 12px', display: 'block' }} />
+          <div style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Bibliothèque vide</div>
           <div style={{ marginTop: 6, fontSize: 12 }}>
-            Analysez un motif dans l'onglet Analyse, puis cliquez "Sauvegarder ce pattern"
+            Analysez un motif dans l'onglet Analyse, puis cliquez "Sauvegarder"
           </div>
         </div>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {patterns.map(p => (
           <PatternCard key={p.id} pattern={p} onClick={setSelected} />
         ))}

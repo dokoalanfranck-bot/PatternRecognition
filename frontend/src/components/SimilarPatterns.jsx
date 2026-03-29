@@ -1,18 +1,24 @@
 import React, { useState, useCallback, memo } from "react"
+import { Clock, ChevronDown, Navigation, Award, Target, TrendingDown } from "lucide-react"
 
 const VISIBLE_STEP = 20
 
-// ─── Helpers stables hors du composant ───────────────────────────────────────
-function getColor(sim) {
-  if (sim >= 80) return "#2ecc71"
-  if (sim >= 50) return "#3498db"
-  return "#f39c12"
+function getRawColor(sim) {
+  if (sim >= 80) return "#34d399"
+  if (sim >= 50) return "#60a5fa"
+  return "#fbbf24"
 }
 
 function getLabel(sim) {
   if (sim >= 80) return "Très similaire"
   if (sim >= 50) return "Similaire"
   return "Peu similaire"
+}
+
+function getIcon(sim) {
+  if (sim >= 80) return Award
+  if (sim >= 50) return Target
+  return TrendingDown
 }
 
 function formatDate(d) {
@@ -23,63 +29,58 @@ function formatDate(d) {
   })
 }
 
-// ─── Carte d'un match — mémoïsée individuellement ────────────────────────────
-// Évite de re-render toutes les cartes quand visibleCount change
 const MatchCard = memo(({ match, index, onNavigate }) => {
   const sim = match.similarity ?? 0
-  const color = getColor(sim)
+  const rawColor = getRawColor(sim)
+  const Icon = getIcon(sim)
 
-  const handleMouseEnter = useCallback(e => {
-    e.currentTarget.style.transform = "translateY(-2px)"
-  }, [])
-  const handleMouseLeave = useCallback(e => {
-    e.currentTarget.style.transform = "none"
-  }, [])
   const handleClick = useCallback(() => {
     onNavigate?.(match)
   }, [match, onNavigate])
 
   return (
-    <div
-      onClick={handleClick}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      style={{
-        border: `2px solid ${color}`,
-        borderRadius: 8,
-        padding: "10px 14px",
-        minWidth: 180,
-        backgroundColor: `${color}10`,
-        cursor: "pointer",
-        transition: "transform 0.15s",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <strong style={{ fontSize: 14 }}>#{index + 1}</strong>
+    <div onClick={handleClick} className="glass-card-interactive" style={{
+      minWidth: 190, flex: '0 0 190px',
+      borderTop: `3px solid ${rawColor}`,
+      cursor: 'pointer',
+      animationDelay: `${index * 30}ms`,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <span style={{
-          backgroundColor: color, color: "#fff",
-          borderRadius: 10, padding: "1px 8px",
-          fontSize: 12, fontWeight: 700
+          fontSize: 12, fontWeight: 700, color: 'var(--text-muted)',
+          display: 'flex', alignItems: 'center', gap: 4
         }}>
+          <Navigation size={11} /> #{index + 1}
+        </span>
+        <span className="badge" style={{ background: `${rawColor}22`, color: rawColor, fontWeight: 700 }}>
           {sim.toFixed(0)}%
         </span>
       </div>
 
-      <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>{getLabel(sim)}</div>
-
-      <div style={{ fontSize: 11, color: "#555" }}>
-        <div>{formatDate(match.start)}</div>
-        <div>{formatDate(match.end)}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+        <Icon size={14} style={{ color: rawColor }} />
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{getLabel(sim)}</span>
       </div>
 
-      <div style={{ fontSize: 10, color: "#aaa", marginTop: 4 }}>
+      <div style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Clock size={10} /> {formatDate(match.start)}
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Clock size={10} /> {formatDate(match.end)}
+        </span>
+      </div>
+
+      <div style={{
+        fontSize: 10, color: 'var(--text-muted)', marginTop: 8,
+        paddingTop: 6, borderTop: '1px solid var(--border-subtle)'
+      }}>
         Score MASS : {match.score?.toFixed(2)}
       </div>
     </div>
   )
 })
 
-// ─── Composant principal mémoïsé ─────────────────────────────────────────────
 const SimilarPatterns = memo(({ matches, onNavigate }) => {
   const [visibleCount, setVisibleCount] = useState(VISIBLE_STEP)
 
@@ -89,7 +90,11 @@ const SimilarPatterns = memo(({ matches, onNavigate }) => {
 
   if (!matches || !matches.length) {
     return (
-      <div style={{ padding: "20px 0", textAlign: "center", color: "#aaa", fontSize: 13 }}>
+      <div style={{
+        padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13,
+        borderRadius: 12, border: '2px dashed var(--border-subtle)', marginTop: 16,
+      }}>
+        <Navigation size={28} style={{ opacity: 0.3, margin: '0 auto 12px', display: 'block' }} />
         Sélectionnez une zone sur le graphe pour détecter les patterns similaires.
       </div>
     )
@@ -99,33 +104,28 @@ const SimilarPatterns = memo(({ matches, onNavigate }) => {
   const hasMore = visibleCount < matches.length
 
   return (
-    <div style={{ marginTop: 16 }}>
-      <h3 style={{ margin: "0 0 10px", fontSize: 15, fontWeight: 600, color: "#2d3436" }}>
-        Patterns similaires ({matches.length})
+    <div style={{ marginTop: 16 }} className="animate-in">
+      <h3 style={{
+        margin: '0 0 12px', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)',
+        display: 'flex', alignItems: 'center', gap: 8,
+      }}>
+        <Target size={16} style={{ color: 'var(--accent-indigo)' }} />
+        Patterns similaires
+        <span className="badge" style={{ background: 'var(--accent-indigo)', color: '#fff' }}>
+          {matches.length}
+        </span>
       </h3>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
         {visible.map((m, i) => (
-          <MatchCard
-            key={`${m.start}-${m.end}`}
-            match={m}
-            index={i}
-            onNavigate={onNavigate}
-          />
+          <MatchCard key={`${m.start}-${m.end}`} match={m} index={i} onNavigate={onNavigate} />
         ))}
       </div>
 
       {hasMore && (
-        <div style={{ textAlign: "center", marginTop: 12 }}>
-          <button
-            onClick={handleShowMore}
-            style={{
-              padding: "6px 20px", borderRadius: 6,
-              border: "1px solid #ddd", background: "#fff",
-              cursor: "pointer", fontSize: 12,
-              fontWeight: 600, color: "#0984e3"
-            }}
-          >
+        <div style={{ textAlign: 'center', marginTop: 14 }}>
+          <button className="btn" onClick={handleShowMore} style={{ gap: 6 }}>
+            <ChevronDown size={14} />
             Afficher plus ({matches.length - visibleCount} restants)
           </button>
         </div>

@@ -1,98 +1,37 @@
 import React, { useState, useCallback, useEffect, useRef, memo } from "react"
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
-const PANEL_STYLE = {
-  position: "fixed",
-  top: 80,
-  right: 16,
-  zIndex: 1000,
-  width: 260,
-  background: "#fff",
-  border: "1px solid #dde",
-  borderRadius: 10,
-  boxShadow: "0 4px 20px rgba(0,0,0,0.12)",
-  fontFamily: "'Segoe UI', sans-serif",
-  fontSize: 13,
-  overflow: "hidden",
-}
-
-const HEADER_STYLE = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  padding: "10px 14px",
-  background: "#6c5ce7",
-  color: "#fff",
-  cursor: "pointer",
-  userSelect: "none",
-}
-
-const BODY_STYLE = {
-  padding: "14px 16px",
-  display: "flex",
-  flexDirection: "column",
-  gap: 14,
-}
-
-const LABEL_STYLE = { fontWeight: 600, color: "#2d3436", marginBottom: 6, display: "block" }
-
-const INPUT_STYLE = {
-  width: "100%",
-  padding: "5px 8px",
-  borderRadius: 5,
-  border: "1px solid #ccc",
-  fontSize: 13,
-  boxSizing: "border-box",
-}
-
-const STAT_STYLE = {
-  background: "#f5f6fa",
-  borderRadius: 6,
-  padding: "6px 10px",
-  fontSize: 11,
-  color: "#636e72",
-  lineHeight: 1.7,
-}
+import { SlidersHorizontal, ChevronUp, ChevronDown } from "lucide-react"
 
 const CATEGORY_COLORS = {
-  all:       "#636e72",
-  excellent: "#2ecc71",
-  good:      "#3498db",
-  low:       "#f39c12",
+  excellent: "var(--accent-emerald)",
+  good:      "var(--accent-blue)",
+  low:       "var(--accent-amber)",
 }
 
-// ─── Composant ────────────────────────────────────────────────────────────────
 const FilterPanel = memo(({ allMatches, onFilterChange }) => {
   const [open, setOpen] = useState(true)
-  const [minSimilarity, setMinSimilarity] = useState(80)  // % minimum par défaut
-  const [maxCount, setMaxCount] = useState("50")           // top 50 par défaut
+  const [minSimilarity, setMinSimilarity] = useState(80)
+  const [maxCount, setMaxCount] = useState("50")
   const prevLenRef = useRef(0)
 
-  // Appliquer immédiatement dès qu'un contrôle change
   const apply = useCallback((sim, count) => {
     const filtered = allMatches
       .filter(m => m.similarity >= sim)
       .sort((a, b) => b.similarity - a.similarity)
-
     const limited = count && !isNaN(count) && parseInt(count) > 0
       ? filtered.slice(0, parseInt(count))
       : filtered
-
     onFilterChange(limited)
   }, [allMatches, onFilterChange])
 
-  // Quand allMatches change (nouvelle recherche) → appliquer les filtres par défaut
   useEffect(() => {
     if (allMatches.length > 0 && allMatches.length !== prevLenRef.current) {
       prevLenRef.current = allMatches.length
-      // Défaut : ≥80%, top 50
       setMinSimilarity(80)
       setMaxCount("50")
       apply(80, "50")
     }
   }, [allMatches, apply])
 
-  // Compteurs par catégorie (basés sur le filtre similarité en cours)
   const counts = {
     total:     allMatches.length,
     excellent: allMatches.filter(m => m.similarity >= 80).length,
@@ -100,7 +39,6 @@ const FilterPanel = memo(({ allMatches, onFilterChange }) => {
     low:       allMatches.filter(m => m.similarity < 50).length,
   }
 
-  // Nombre de matches qui passent le filtre similarité
   const passFilter = allMatches.filter(m => m.similarity >= minSimilarity).length
 
   const handleSimilarityChange = useCallback((e) => {
@@ -115,7 +53,6 @@ const FilterPanel = memo(({ allMatches, onFilterChange }) => {
     apply(minSimilarity, val)
   }, [apply, minSimilarity])
 
-  // Raccourci : cliquer une catégorie pré-remplit le filtre
   const applyPreset = useCallback((sim) => {
     setMinSimilarity(sim)
     setMaxCount("")
@@ -125,86 +62,90 @@ const FilterPanel = memo(({ allMatches, onFilterChange }) => {
   if (allMatches.length === 0) return null
 
   return (
-    <div style={PANEL_STYLE}>
-
-      {/* ── Header cliquable ── */}
-      <div style={HEADER_STYLE} onClick={() => setOpen(o => !o)}>
-        <span>🎛️ Filtres d'affichage</span>
-        <span style={{ fontSize: 16 }}>{open ? "▲" : "▼"}</span>
+    <div style={{
+      position: 'fixed', top: 80, right: 16, zIndex: 1000,
+      width: 272,
+      background: 'rgba(15, 23, 42, 0.85)',
+      backdropFilter: 'blur(24px)',
+      WebkitBackdropFilter: 'blur(24px)',
+      border: '1px solid var(--border-subtle)',
+      borderRadius: 'var(--radius-lg)',
+      boxShadow: 'var(--shadow-xl)',
+      overflow: 'hidden',
+      animation: 'slideInRight 0.3s ease-out',
+    }}>
+      {/* Header */}
+      <div
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '12px 16px',
+          background: 'linear-gradient(135deg, rgba(99,102,241,0.15), rgba(129,140,248,0.08))',
+          cursor: 'pointer', userSelect: 'none',
+          borderBottom: open ? '1px solid var(--border-subtle)' : 'none',
+        }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-primary)', fontWeight: 600, fontSize: 13 }}>
+          <SlidersHorizontal size={15} style={{ color: 'var(--accent-indigo)' }} />
+          Filtres
+        </span>
+        {open ? <ChevronUp size={16} style={{ color: 'var(--text-muted)' }} /> : <ChevronDown size={16} style={{ color: 'var(--text-muted)' }} />}
       </div>
 
-      {/* ── Corps réductible ── */}
+      {/* Body */}
       {open && (
-        <div style={BODY_STYLE}>
+        <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-          {/* Stats globales */}
-          <div style={STAT_STYLE}>
-            <div><strong>{counts.total}</strong> patterns détectés au total</div>
-            <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-              <span style={{ color: CATEGORY_COLORS.excellent, cursor: "pointer", fontWeight: 600 }}
-                onClick={() => applyPreset(80)}>
-                ≥80% : {counts.excellent}
-              </span>
-              <span style={{ color: CATEGORY_COLORS.good, cursor: "pointer", fontWeight: 600 }}
-                onClick={() => applyPreset(50)}>
-                50–79% : {counts.good}
-              </span>
-              <span style={{ color: CATEGORY_COLORS.low, cursor: "pointer", fontWeight: 600 }}
-                onClick={() => applyPreset(0)}>
-                &lt;50% : {counts.low}
-              </span>
+          {/* Global stats */}
+          <div style={{
+            background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)',
+            padding: '10px 12px', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7,
+          }}>
+            <div><strong style={{ color: 'var(--text-primary)' }}>{counts.total}</strong> patterns détectés</div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
+              {[
+                { label: '≥80%', count: counts.excellent, color: CATEGORY_COLORS.excellent, sim: 80 },
+                { label: '50–79%', count: counts.good, color: CATEGORY_COLORS.good, sim: 50 },
+                { label: '<50%', count: counts.low, color: CATEGORY_COLORS.low, sim: 0 },
+              ].map(c => (
+                <span key={c.label}
+                  onClick={() => applyPreset(c.sim)}
+                  style={{ color: c.color, cursor: 'pointer', fontWeight: 600, fontSize: 11 }}>
+                  {c.label}: {c.count}
+                </span>
+              ))}
             </div>
           </div>
 
-          {/* Filtre similarité minimum */}
+          {/* Similarity slider */}
           <div>
-            <label style={LABEL_STYLE}>
-              Similarité minimum : <span style={{ color: "#6c5ce7" }}>{minSimilarity}%</span>
+            <label style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8, display: 'block', fontSize: 12 }}>
+              Similarité minimum : <span style={{ color: 'var(--accent-indigo)' }}>{minSimilarity}%</span>
             </label>
-            <input
-              type="range"
-              min={0} max={100} step={1}
-              value={minSimilarity}
-              onChange={handleSimilarityChange}
-              style={{ width: "100%", accentColor: "#6c5ce7" }}
-            />
-            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
-              <input
-                type="number"
-                min={0} max={100} step={5}
-                value={minSimilarity}
-                onChange={handleSimilarityChange}
-                style={{ ...INPUT_STYLE, width: 70 }}
+            <input type="range" min={0} max={100} step={1} value={minSimilarity} onChange={handleSimilarityChange} />
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
+              <input type="number" className="input" min={0} max={100} step={5}
+                value={minSimilarity} onChange={handleSimilarityChange}
+                style={{ width: 65, padding: '4px 8px', fontSize: 12 }}
               />
-              <span style={{ fontSize: 11, color: "#888" }}>
-                → {passFilter} patterns
-              </span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>→ {passFilter} patterns</span>
             </div>
           </div>
 
-          {/* Nombre max de rectangles */}
+          {/* Max count */}
           <div>
-            <label style={LABEL_STYLE}>
-              Nb de rectangles à afficher
+            <label style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8, display: 'block', fontSize: 12 }}>
+              Nb rectangles max
             </label>
-            <input
-              type="number"
-              min={1}
-              value={maxCount}
-              onChange={handleCountChange}
-              style={INPUT_STYLE}
-              placeholder={`tous (${passFilter})`}
+            <input type="number" className="input" min={1} value={maxCount} onChange={handleCountChange}
+              placeholder={`tous (${passFilter})`} style={{ fontSize: 12 }}
             />
-            <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>
-              Laisse vide pour afficher tous les patterns filtrés.
-              Les meilleurs scores sont priorisés.
-            </div>
           </div>
 
-          {/* Raccourcis rapides */}
+          {/* Quick presets */}
           <div>
-            <label style={{ ...LABEL_STYLE, marginBottom: 6 }}>Raccourcis</label>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <label style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8, display: 'block', fontSize: 12 }}>Raccourcis</label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {[
                 { label: "Top 10", sim: 0, count: "10" },
                 { label: "Top 50", sim: 0, count: "50" },
@@ -212,17 +153,9 @@ const FilterPanel = memo(({ allMatches, onFilterChange }) => {
                 { label: "≥50%",   sim: 50, count: "" },
                 { label: "Tout",   sim: 0,  count: "" },
               ].map(({ label, sim, count }) => (
-                <button key={label}
-                  onClick={() => {
-                    setMinSimilarity(sim)
-                    setMaxCount(count)
-                    apply(sim, count)
-                  }}
-                  style={{
-                    padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 600,
-                    border: "1px solid #6c5ce7", background: "#f3f0ff",
-                    color: "#6c5ce7", cursor: "pointer"
-                  }}
+                <button key={label} className="badge badge-indigo"
+                  onClick={() => { setMinSimilarity(sim); setMaxCount(count); apply(sim, count) }}
+                  style={{ cursor: 'pointer', border: '1px solid rgba(129,140,248,0.2)' }}
                 >
                   {label}
                 </button>
@@ -230,10 +163,15 @@ const FilterPanel = memo(({ allMatches, onFilterChange }) => {
             </div>
           </div>
 
-          {/* Résumé de la sélection active */}
-          <div style={{ ...STAT_STYLE, background: "#f0f0ff", borderLeft: "3px solid #6c5ce7" }}>
-            Affichage actuel :{" "}
-            <strong style={{ color: "#6c5ce7" }}>
+          {/* Summary */}
+          <div style={{
+            background: 'var(--accent-indigo-bg)',
+            borderLeft: '3px solid var(--accent-indigo)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '8px 12px', fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.7,
+          }}>
+            Affichage :{" "}
+            <strong style={{ color: 'var(--accent-indigo)' }}>
               {maxCount && parseInt(maxCount) > 0
                 ? `${Math.min(parseInt(maxCount), passFilter)} / ${passFilter}`
                 : passFilter}{" "}
@@ -241,7 +179,6 @@ const FilterPanel = memo(({ allMatches, onFilterChange }) => {
             </strong>
             {minSimilarity > 0 && <span> · seuil ≥{minSimilarity}%</span>}
           </div>
-
         </div>
       )}
     </div>

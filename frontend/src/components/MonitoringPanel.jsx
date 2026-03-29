@@ -1,5 +1,9 @@
 import React, { memo, useState, useCallback } from "react"
 import { savePattern } from "../api/api"
+import {
+  Activity, Clock, Hash, TrendingUp, TrendingDown, Minus,
+  Award, Target, BarChart3, Save, X, Check, AlertCircle, Zap, Sigma
+} from "lucide-react"
 
 function fmt(v, d = 2) {
   if (v === undefined || v === null) return "-"
@@ -13,23 +17,14 @@ function formatDate(d) {
   })
 }
 
-const SEC = {
-  background: "#fff", border: "1px solid #e8e8e8",
-  borderRadius: 10, padding: "14px 18px", marginBottom: 12
-}
-const TITLE = { margin: "0 0 10px", fontSize: 14, fontWeight: 700, color: "#2d3436" }
-const CARDS = { display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }
-
-const StatCard = memo(({ title, value, unit, color, icon }) => (
-  <div style={{
-    background: "#fff", border: "1px solid #e8e8e8", borderRadius: 8,
-    padding: "10px 14px", minWidth: 130, flex: "1 1 130px",
-    borderLeft: `4px solid ${color || "#0984e3"}`
-  }}>
-    <div style={{ fontSize: 11, color: "#888", marginBottom: 2 }}>{icon} {title}</div>
-    <div style={{ fontSize: 20, fontWeight: 700, color: color || "#2d3436" }}>
+const StatCard = memo(({ title, value, unit, colorClass, icon: Icon }) => (
+  <div className={`stat-card ${colorClass || 'stat-card-indigo'}`}>
+    <div className="stat-label">
+      {Icon && <Icon size={12} />} {title}
+    </div>
+    <div className="stat-value">
       {value}
-      <span style={{ fontSize: 11, fontWeight: 400, color: "#aaa", marginLeft: 3 }}>{unit}</span>
+      {unit && <span className="stat-unit">{unit}</span>}
     </div>
   </div>
 ))
@@ -38,35 +33,30 @@ const DistributionBar = memo(({ distribution }) => {
   const total = distribution.excellent.count + distribution.good.count + distribution.low.count
   if (total === 0) return null
   const segs = [
-    { ...distribution.excellent, key: "excellent" },
-    { ...distribution.good, key: "good" },
-    { ...distribution.low, key: "low" },
+    { ...distribution.excellent, key: "excellent", bg: "var(--accent-emerald)" },
+    { ...distribution.good, key: "good", bg: "var(--accent-blue)" },
+    { ...distribution.low, key: "low", bg: "var(--accent-amber)" },
   ]
   return (
     <div>
-      <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", height: 28, marginBottom: 6 }}>
+      <div className="distribution-bar" style={{ marginBottom: 10 }}>
         {segs.map(s => {
           const pct = (s.count / total) * 100
           if (pct === 0) return null
           return (
             <div key={s.key} style={{
-              width: `${pct}%`, background: s.color,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              color: "#fff", fontSize: 11, fontWeight: 700,
-              minWidth: s.count > 0 ? 30 : 0
+              width: `${pct}%`, background: s.bg,
+              minWidth: s.count > 0 ? 32 : 0
             }}>
               {s.count}
             </div>
           )
         })}
       </div>
-      <div style={{ display: "flex", gap: 16, fontSize: 11, color: "#555" }}>
+      <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--text-muted)' }}>
         {segs.map(s => (
-          <span key={s.key}>
-            <span style={{
-              display: "inline-block", width: 8, height: 8,
-              borderRadius: "50%", background: s.color, marginRight: 4
-            }} />
+          <span key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.bg, display: 'inline-block' }} />
             {s.label} : {s.count}
           </span>
         ))}
@@ -75,7 +65,7 @@ const DistributionBar = memo(({ distribution }) => {
   )
 })
 
-const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved }) => {
+const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved, dataset }) => {
   const [saving, setSaving] = useState(false)
   const [saveName, setSaveName] = useState("")
   const [saveDesc, setSaveDesc] = useState("")
@@ -90,7 +80,7 @@ const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved }) => {
     setSaveMsg(null)
     try {
       const dist = monitoring?.distribution || null
-      const res = await savePattern(pi.start, pi.end, saveName.trim(), saveDesc.trim(), matchCount || 0, dist)
+      const res = await savePattern(pi.start, pi.end, saveName.trim(), saveDesc.trim(), matchCount || 0, dist, dataset)
       if (res.error) { setSaveMsg({ type: "error", text: res.error }) }
       else {
         setSaveMsg({ type: "ok", text: res.message })
@@ -99,64 +89,59 @@ const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved }) => {
         setShowSaveForm(false)
         if (onPatternSaved) onPatternSaved()
       }
-    } catch { setSaveMsg({ type: "error", text: "Erreur reseau." }) }
+    } catch { setSaveMsg({ type: "error", text: "Erreur réseau." }) }
     setSaving(false)
-  }, [saveName, saveDesc, monitoring, matchCount, onPatternSaved])
+  }, [saveName, saveDesc, monitoring, matchCount, onPatternSaved, dataset])
 
   if (!monitoring) return null
   const { pattern_info: pi, search_info: si, distribution, score_stats: ss } = monitoring
 
   return (
-    <div style={{ marginTop: 16 }}>
-      <h3 style={{
-        margin: "0 0 12px", fontSize: 16, fontWeight: 700, color: "#2d3436",
-        borderBottom: "2px solid #0984e3", paddingBottom: 6,
-        display: "flex", justifyContent: "space-between", alignItems: "center"
+    <div style={{ marginTop: 20 }} className="animate-in">
+      {/* Section Header */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        marginBottom: 16, paddingBottom: 10,
+        borderBottom: '1px solid var(--border-subtle)',
       }}>
-        Monitoring de la detection
+        <h3 style={{
+          margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--text-primary)',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <Activity size={18} style={{ color: 'var(--accent-indigo)' }} />
+          Monitoring de la détection
+        </h3>
         {!showSaveForm && (
-          <button onClick={() => setShowSaveForm(true)} style={{
-            padding: "6px 16px", borderRadius: 6, border: "2px solid #2ecc71",
-            background: "#2ecc71", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer"
-          }}>
-            Sauvegarder ce pattern
+          <button className="btn btn-success" onClick={() => setShowSaveForm(true)}>
+            <Save size={14} /> Sauvegarder
           </button>
         )}
-      </h3>
+      </div>
 
-      {/* Save form */}
+      {/* Save Form */}
       {showSaveForm && (
-        <div style={{ ...SEC, borderLeft: "4px solid #2ecc71" }}>
-          <h4 style={TITLE}>Sauvegarder dans la bibliotheque</h4>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <input
-              value={saveName} onChange={e => setSaveName(e.target.value)}
-              placeholder="Nom du pattern (obligatoire)"
-              style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #ccc", fontSize: 13 }}
-            />
-            <textarea
-              value={saveDesc} onChange={e => setSaveDesc(e.target.value)}
-              placeholder="Description (optionnel)"
-              rows={2}
-              style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #ccc", fontSize: 13, resize: "vertical" }}
-            />
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={handleSave} disabled={saving || !saveName.trim()}
-                style={{
-                  padding: "8px 20px", borderRadius: 6, border: "none",
-                  background: saveName.trim() ? "#2ecc71" : "#ddd",
-                  color: "#fff", fontWeight: 700, cursor: saveName.trim() ? "pointer" : "not-allowed"
-                }}>
-                {saving ? "Sauvegarde..." : "Confirmer"}
+        <div className="section animate-in" style={{ borderLeft: '3px solid var(--accent-emerald)', marginBottom: 16 }}>
+          <h4 className="section-title"><Save size={15} /> Sauvegarder dans la bibliothèque</h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <input className="input" value={saveName} onChange={e => setSaveName(e.target.value)}
+              placeholder="Nom du pattern (obligatoire)" />
+            <textarea className="input" value={saveDesc} onChange={e => setSaveDesc(e.target.value)}
+              placeholder="Description (optionnel)" rows={2} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-success" onClick={handleSave} disabled={saving || !saveName.trim()}>
+                {saving ? "Sauvegarde…" : <><Check size={14} /> Confirmer</>}
               </button>
-              <button onClick={() => { setShowSaveForm(false); setSaveMsg(null) }}
-                style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer" }}>
-                Annuler
+              <button className="btn" onClick={() => { setShowSaveForm(false); setSaveMsg(null) }}>
+                <X size={14} /> Annuler
               </button>
             </div>
           </div>
           {saveMsg && (
-            <div style={{ marginTop: 8, fontSize: 12, color: saveMsg.type === "ok" ? "#2ecc71" : "#e74c3c" }}>
+            <div style={{
+              marginTop: 10, fontSize: 12, display: 'flex', alignItems: 'center', gap: 6,
+              color: saveMsg.type === "ok" ? 'var(--accent-emerald)' : 'var(--accent-rose)'
+            }}>
+              {saveMsg.type === "ok" ? <Check size={14} /> : <AlertCircle size={14} />}
               {saveMsg.text}
             </div>
           )}
@@ -164,56 +149,56 @@ const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved }) => {
       )}
 
       {/* Distribution */}
-      <div style={SEC}>
-        <h4 style={TITLE}>Distribution des similitudes</h4>
+      <div className="section">
+        <h4 className="section-title"><BarChart3 size={15} /> Distribution des similitudes</h4>
         <DistributionBar distribution={distribution} />
-        <div style={CARDS}>
-          <StatCard title="Excellent (80-100%)" value={distribution.excellent.count} unit="cycles" color="#2ecc71" icon="+" />
-          <StatCard title="Bon (50-79%)" value={distribution.good.count} unit="cycles" color="#3498db" icon="o" />
-          <StatCard title="Faible (<50%)" value={distribution.low.count} unit="cycles" color="#f39c12" icon="-" />
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
+          <StatCard title="Excellent (80–100%)" value={distribution.excellent.count} unit="cycles" colorClass="stat-card-emerald" icon={Award} />
+          <StatCard title="Bon (50–79%)" value={distribution.good.count} unit="cycles" colorClass="stat-card-blue" icon={Target} />
+          <StatCard title="Faible (<50%)" value={distribution.low.count} unit="cycles" colorClass="stat-card-amber" icon={Minus} />
         </div>
       </div>
 
-      {/* Pattern info */}
-      <div style={SEC}>
-        <h4 style={TITLE}>Pattern selectionne</h4>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 20px", fontSize: 12 }}>
-          <div><span style={{ color: "#888" }}>Debut :</span> <strong>{formatDate(pi.start)}</strong></div>
-          <div><span style={{ color: "#888" }}>Fin :</span> <strong>{formatDate(pi.end)}</strong></div>
-          <div><span style={{ color: "#888" }}>Duree :</span> <strong>{fmt(pi.duration_hours)} h</strong></div>
-          <div><span style={{ color: "#888" }}>Points :</span> <strong>{fmt(pi.nb_points, 0)}</strong></div>
+      {/* Pattern Info */}
+      <div className="section">
+        <h4 className="section-title"><Zap size={15} /> Pattern sélectionné</h4>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 24px', fontSize: 12, marginBottom: 14 }}>
+          <div><span style={{ color: 'var(--text-muted)' }}>Début :</span> <strong style={{ color: 'var(--text-primary)' }}>{formatDate(pi.start)}</strong></div>
+          <div><span style={{ color: 'var(--text-muted)' }}>Fin :</span> <strong style={{ color: 'var(--text-primary)' }}>{formatDate(pi.end)}</strong></div>
+          <div><span style={{ color: 'var(--text-muted)' }}>Durée :</span> <strong style={{ color: 'var(--text-primary)' }}>{fmt(pi.duration_hours)} h</strong></div>
+          <div><span style={{ color: 'var(--text-muted)' }}>Points :</span> <strong style={{ color: 'var(--text-primary)' }}>{fmt(pi.nb_points, 0)}</strong></div>
         </div>
-        <div style={CARDS}>
-          <StatCard title="Moyenne" value={fmt(pi.mean)} unit="kW" color="#0984e3" icon="u" />
-          <StatCard title="Ecart-type" value={fmt(pi.std)} unit="kW" color="#6c5ce7" icon="o" />
-          <StatCard title="Min" value={fmt(pi.min)} unit="kW" color="#00b894" icon="v" />
-          <StatCard title="Max" value={fmt(pi.max)} unit="kW" color="#d63031" icon="^" />
-          <StatCard title="Amplitude" value={fmt(pi.amplitude)} unit="kW" color="#e17055" icon="|" />
-          <StatCard title="Energie totale" value={fmt(pi.energy_total, 0)} unit="kW*pts" color="#fdcb6e" icon="E" />
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <StatCard title="Moyenne" value={fmt(pi.mean)} unit="kW" colorClass="stat-card-blue" icon={TrendingUp} />
+          <StatCard title="Écart-type" value={fmt(pi.std)} unit="kW" colorClass="stat-card-violet" icon={Sigma} />
+          <StatCard title="Min" value={fmt(pi.min)} unit="kW" colorClass="stat-card-emerald" icon={TrendingDown} />
+          <StatCard title="Max" value={fmt(pi.max)} unit="kW" colorClass="stat-card-rose" icon={TrendingUp} />
+          <StatCard title="Amplitude" value={fmt(pi.amplitude)} unit="kW" colorClass="stat-card-amber" icon={Activity} />
+          <StatCard title="Énergie totale" value={fmt(pi.energy_total, 0)} unit="kW·pts" colorClass="stat-card-cyan" icon={Zap} />
         </div>
       </div>
 
-      {/* Scores */}
+      {/* Scores MASS */}
       {ss?.best_score !== undefined && (
-        <div style={SEC}>
-          <h4 style={TITLE}>Scores MASS</h4>
-          <div style={CARDS}>
-            <StatCard title="Meilleur" value={fmt(ss.best_score, 4)} unit="MASS" color="#2ecc71" icon="*" />
-            <StatCard title="Moyen" value={fmt(ss.avg_score, 4)} unit="MASS" color="#0984e3" icon="~" />
-            <StatCard title="Median" value={fmt(ss.median_score, 4)} unit="MASS" color="#6c5ce7" icon="~" />
-            <StatCard title="Pire" value={fmt(ss.worst_score, 4)} unit="MASS" color="#e74c3c" icon="!" />
+        <div className="section">
+          <h4 className="section-title"><Target size={15} /> Scores MASS</h4>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <StatCard title="Meilleur" value={fmt(ss.best_score, 4)} unit="MASS" colorClass="stat-card-emerald" icon={Award} />
+            <StatCard title="Moyen" value={fmt(ss.avg_score, 4)} unit="MASS" colorClass="stat-card-blue" icon={TrendingUp} />
+            <StatCard title="Médian" value={fmt(ss.median_score, 4)} unit="MASS" colorClass="stat-card-violet" icon={Target} />
+            <StatCard title="Pire" value={fmt(ss.worst_score, 4)} unit="MASS" colorClass="stat-card-rose" icon={TrendingDown} />
           </div>
         </div>
       )}
 
       {/* Pipeline */}
-      <div style={SEC}>
-        <h4 style={TITLE}>Pipeline de recherche</h4>
-        <div style={{ fontSize: 12, color: "#555" }}>
-          Serie : <strong>{fmt(si.series_length, 0)}</strong> points |
-          Positions scannees : <strong>{fmt(si.total_positions_scanned, 0)}</strong> |
-          Matches : <strong>{si.matches_returned}</strong> |
-          Temps : <strong>{fmt(si.computation_time_sec, 3)} s</strong>
+      <div className="section">
+        <h4 className="section-title"><Hash size={15} /> Pipeline de recherche</h4>
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
+          <span>Série : <strong style={{ color: 'var(--text-primary)' }}>{fmt(si.series_length, 0)}</strong> points</span>
+          <span>Positions : <strong style={{ color: 'var(--text-primary)' }}>{fmt(si.total_positions_scanned, 0)}</strong></span>
+          <span>Matches : <strong style={{ color: 'var(--text-primary)' }}>{si.matches_returned}</strong></span>
+          <span><Clock size={12} style={{ verticalAlign: 'middle' }} /> <strong style={{ color: 'var(--text-primary)' }}>{fmt(si.computation_time_sec, 3)} s</strong></span>
         </div>
       </div>
     </div>

@@ -1,29 +1,36 @@
 import React, { useMemo, memo } from "react"
 import Plot from "react-plotly.js"
+import { BarChart3 } from "lucide-react"
 
-// ─── Config Plotly stable hors du composant ──────────────────────────────────
 const PLOT_CONFIG = { scrollZoom: true, displayModeBar: true }
 
 const LAYOUT_BASE = {
-  height: 250,
+  height: 260,
   margin: { t: 10, b: 45, l: 50, r: 20 },
   xaxis: {
-    title: { text: "Sous-séquence (position)", font: { size: 11 } },
-    showgrid: false
+    title: { text: "Sous-séquence (position)", font: { size: 11, color: "#64748b" } },
+    showgrid: false,
+    tickfont: { color: "#94a3b8", size: 10 },
+    tickcolor: "#334155",
+    linecolor: "#334155",
   },
   yaxis: {
-    title: { text: "Score (distance euclidienne)", font: { size: 11 } },
+    title: { text: "Score (distance euclidienne)", font: { size: 11, color: "#64748b" } },
     showgrid: true,
-    gridcolor: "#f0f0f0"
+    gridcolor: "rgba(148,163,184,0.08)",
+    tickfont: { color: "#94a3b8", size: 10 },
+    tickcolor: "#334155",
+    linecolor: "#334155",
+    zeroline: false,
   },
-  plot_bgcolor: "#fafafa",
-  paper_bgcolor: "#fff",
+  plot_bgcolor: "transparent",
+  paper_bgcolor: "transparent",
   showlegend: false,
-  bargap: 0.1
+  bargap: 0.1,
+  font: { family: "Inter, sans-serif" },
 }
 
 const ScoreDistribution = memo(({ allScores, matches }) => {
-  // ✅ Hooks toujours appelés en premier, avant tout return conditionnel
   const topScores = useMemo(
     () => new Set((matches || []).map(m => m.score)),
     [matches]
@@ -38,26 +45,29 @@ const ScoreDistribution = memo(({ allScores, matches }) => {
       y: scores,
       type: "bar",
       marker: {
-        color: scores.map(s => topScores.has(s) ? "#e74c3c" : "#b2bec3"),
+        color: scores.map(s => topScores.has(s) ? "#f87171" : "rgba(129,140,248,0.3)"),
         line: { width: 0 }
       },
       hovertemplate: "Sous-séquence #%{x}<br>Score : %{y:.2f}<extra></extra>"
     }]
   }, [allScores, topScores])
 
-  // ✅ Early return après les hooks
   if (!allScores || allScores.length === 0) return null
 
   return (
-    <div style={{ marginTop: 16, marginBottom: 8 }}>
-      <h3 style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 600, color: "#2d3436" }}>
-        Scores de similarité — pattern vs sous-séquences
-        <span style={{ fontWeight: 400, color: "#888", fontSize: 12, marginLeft: 8 }}>
-          {allScores.length} sous-séquences calculées · {(matches || []).length} top matches (rouge)
+    <div className="section animate-in" style={{ marginTop: 16, marginBottom: 8 }}>
+      <h3 style={{
+        margin: '0 0 8px', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)',
+        display: 'flex', alignItems: 'center', gap: 8,
+      }}>
+        <BarChart3 size={16} style={{ color: 'var(--accent-indigo)' }} />
+        Scores de similarité
+        <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 12, marginLeft: 4 }}>
+          {allScores.length} sous-séquences · {(matches || []).length} top matches
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#f87171', marginLeft: 6, verticalAlign: 'middle' }} />
         </span>
       </h3>
 
-      {/* ✅ layout stable — ne déclenche pas de re-render Plotly inutile */}
       <Plot
         data={plotData}
         layout={LAYOUT_BASE}

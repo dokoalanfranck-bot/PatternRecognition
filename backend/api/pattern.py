@@ -8,9 +8,12 @@ import time
 
 router = APIRouter()
 
-data = load_dataset()
-series = data["value"].values
-dates = data.index
+
+def _get_data(dataset=None):
+    data = load_dataset(dataset)
+    series = data["value"].values
+    dates = data.index
+    return data, series, dates
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -22,8 +25,10 @@ async def detect_pattern(request: dict):
     start = request["start"]
     end = request["end"]
     top_k = int(request.get("top_k", 0))
+    dataset = request.get("dataset")
 
     def _detect():
+        data, series, dates = _get_data(dataset)
         t0 = time.time()
         pattern = data.loc[start:end]["value"].values
 
@@ -97,8 +102,10 @@ async def compute_all_scores(request: dict):
     start = request["start"]
     end = request["end"]
     n_subseq = int(request.get("n_subseq", 1000))
+    dataset = request.get("dataset")
 
     def _compute():
+        data, series, dates = _get_data(dataset)
         pattern = data.loc[start:end]["value"].values
         if len(pattern) < 10:
             return {"scores": [], "error": "Sélection trop courte."}
@@ -127,10 +134,12 @@ async def save_pattern_endpoint(request: dict):
     end = request["end"]
     name = request.get("name", "").strip()
     description = request.get("description", "").strip()
+    dataset = request.get("dataset")
 
     if not name:
         return {"error": "Le nom du pattern est obligatoire."}
 
+    data, series, dates = _get_data(dataset)
     pat_slice = data.loc[start:end]
     values = pat_slice["value"].tolist()
     dates_list = [str(d) for d in pat_slice.index]
@@ -198,7 +207,9 @@ async def compare_pattern_endpoint(pid: int, request: dict):
 
     start = request.get("start")
     end = request.get("end")
+    dataset = request.get("dataset")
 
+    data, series, dates = _get_data(dataset)
     ref_values = np.array(stored["values"], dtype=float)
 
     if start and end:
