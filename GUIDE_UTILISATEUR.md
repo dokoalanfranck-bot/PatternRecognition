@@ -1,302 +1,335 @@
-# Guide utilisateur — Detection de Patterns Energetiques
+# Guide utilisateur — Détection de Patterns Industriels
 
-Bienvenue dans l'application de détection de patterns de consommation électrique. Ce guide vous explique comment utiliser l'outil pas à pas.
+Bienvenue ! Ce guide vous explique comment utiliser l'application **pas à pas**, sans connaissances techniques requises.
 
 ---
 
 ## Table des matières
 
-1. [Vue d'ensemble](#vue-densemble)
+1. [À quoi sert cette application ?](#à-quoi-sert-cette-application-)
 2. [Démarrage de l'application](#démarrage-de-lapplication)
-3. [Onglet Analyse](#onglet-analyse)
-4. [Onglet Bibliothèque](#onglet-bibliothèque)
-5. [Conseils d'utilisation](#conseils-dutilisation)
+3. [Écran d'accueil — Choix du jeu de données](#écran-daccueil--choix-du-jeu-de-données)
+4. [Onglet Analyse](#onglet-analyse)
+5. [Onglet Bibliothèque](#onglet-bibliothèque)
+6. [Conseils d'utilisation](#conseils-dutilisation)
+7. [Dépannage](#dépannage)
+8. [Questions fréquentes](#questions-fréquentes)
 
 ---
 
-## Vue d'ensemble
+## À quoi sert cette application ?
 
-L'application vous permet de :
+L'application vous permet de chercher des **formes récurrentes** (appelées *patterns*) dans des données industrielles :
 
-✅ **Analyser** des patterns de consommation électrique sur un historique de ~1,8 million de points
-✅ **Détecter** toutes les occurrences similaires d'un pattern sélectionné
-✅ **Filtrer** les résultats par similarité (≥80%, ≥50%, etc.)
-✅ **Sauvegarder** les meilleurs patterns dans une bibliothèque
-✅ **Consulter** la répartition par intervalle de similarité pour chaque pattern
+✅ **Choisir** parmi 4 jeux de données (électricité, vapeur, poids, temps de cycle)  
+✅ **Visualiser** les courbes sur un graphe interactif sombre haute performance  
+✅ **Sélectionner** une portion de courbe qui vous intéresse  
+✅ **Détecter** automatiquement toutes les portions similaires dans l'historique  
+✅ **Filtrer** les résultats par niveau de similarité  
+✅ **Sauvegarder** les meilleurs patterns dans une bibliothèque personnelle  
+✅ **Consulter** et gérer vos patterns sauvegardés  
 
 ---
 
 ## Démarrage de l'application
 
-### Étape 1 : Lancer le backend
+### Prérequis
 
-Ouvrez un terminal et exécutez :
+- Python installé sur votre ordinateur
+- Node.js installé sur votre ordinateur
+- Les dépendances déjà installées (voir README.md)
+
+### Étape 1 : Lancer le serveur (backend)
+
+Ouvrez un terminal (ou l'invite de commandes) et tapez :
 
 ```bash
 cd Pfe_Project
-.venv\Scripts\activate
-uvicorn backend.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-Attendez le message `Application startup complete`. Le backend est maintenant sur `http://127.0.0.1:8000`.
+Attendez le message **`Application startup complete`**. Le serveur est prêt.
 
-### Étape 2 : Lancer le frontend
+> Si vous avez un environnement virtuel, activez-le d'abord :
+> ```bash
+> .venv\Scripts\activate
+> ```
 
-Ouvrez un **deuxième terminal** et exécutez :
+### Étape 2 : Lancer l'interface (frontend)
+
+Ouvrez un **deuxième terminal** et tapez :
 
 ```bash
 cd Pfe_Project\frontend
 npm start
 ```
 
-L'application s'ouvre dans votre navigateur sur `http://localhost:3000`.
+L'application s'ouvre automatiquement dans votre navigateur sur **http://localhost:3000**.
+
+---
+
+## Écran d'accueil — Choix du jeu de données
+
+Au démarrage, vous arrivez sur un écran sombre avec **4 cartes** :
+
+| Carte | Données | Unité |
+|---|---|---|
+| **C2 elect kw** | Consommation électrique | kW |
+| **C2 Vap kgh** | Vapeur | kg/h |
+| **C2 Prod Poid Process** | Poids de production | kg |
+| **C2 Prod Tc Process** | Temps de cycle | s |
+
+**Cliquez sur la carte** du jeu de données que vous souhaitez analyser.
+
+Chaque carte affiche :
+- Le nombre de lignes (points de mesure)
+- La taille du fichier
+- Les colonnes disponibles
 
 ---
 
 ## Onglet Analyse
 
-C'est ici que vous **cherchez et explorez** les patterns.
+C'est ici que vous **cherchez et explorez** les patterns. L'interface a un thème sombre avec des éléments en verre semi-transparent.
 
-### 1️⃣ Navigation dans les données
+### 1️⃣ Barre de navigation (en haut)
 
 En haut de l'écran, vous voyez :
+- Le **nom du jeu de données** sélectionné (avec une icône)
+- Deux onglets : **Analyse** et **Bibliothèque**
+- Un bouton **Changer** pour revenir à l'écran de sélection
+
+### 2️⃣ Naviguer dans les données
+
+Juste en dessous, la barre de pagination affiche :
 - **Page X / Y** : numéro de la page actuelle
-- **Flèches** : naviguez entre les pages
-- **Champ d'entrée** : allez directement à une page (entrez un numéro, appuyez sur Entrée)
-- **"X points au total"** : affiche le nombre total de points dans l'historique (~1,8M)
+- **Boutons ◀ ▶** : page précédente / suivante
+- **Champ de saisie** : tapez un numéro et appuyez sur Entrée pour sauter à une page
+- **Nombre de points total** dans le jeu de données
 
 Chaque page contient **50 000 points** de données.
 
-### 2️⃣ Sélectionner un pattern
+### 3️⃣ Sélectionner un pattern sur le graphe
 
-**Sur le graphe (courbe bleue) :**
+Le graphe affiche la courbe de vos données en **bleu-indigo**.
 
-1. **Cliquez et dragguez** pour tracer une zone rectangulaire
-2. La zone devient **rouge** (sélection)
+**Pour lancer une recherche :**
+
+1. **Cliquez et glissez** horizontalement sur la portion de courbe qui vous intéresse
+2. La zone sélectionnée apparaît en **rouge**
 3. **Relâchez** : la recherche démarre automatiquement
 
-⏳ **Attente** : le système demande au least 10 points. S'il en manque, vous verrez une alerte.
+⏳ La recherche prend généralement **0.5 à 2 secondes**.
 
-### 3️⃣ Résultats de la recherche
+> **Minimum 10 points** requis. Si la sélection est trop petite, un message d'alerte apparaîtra.
 
-Une fois la recherche terminée, trois choses s'affichent :
+### 4️⃣ Comprendre les résultats
 
-#### A) **Légende des couleurs** (en haut à gauche du graphe)
-```
-🟩 ≥80%  = Excellent (très similaire)
-🟦 50-79% = Bon (similaire)
-🟨 <50%  = Faible (peu similaire)
-🟥      = Sélection
-```
+Après la recherche, des **rectangles colorés** apparaissent sur le graphe aux endroits où des portions similaires ont été trouvées :
 
-#### B) **Filtres d'affichage** (panneau violet à droite)
-Titre : "🎛️ Filtres d'affichage"
+| Couleur | Signification |
+|---|---|
+| 🟩 **Vert** | Excellent — ≥ 80% de similarité |
+| 🟦 **Bleu** | Bon — entre 50% et 79% |
+| 🟨 **Jaune** | Faible — moins de 50% |
+| 🟥 **Rouge** | Votre sélection d'origine |
 
-- **Curseur ou champ** : réglez le seuil minimum de similarité
-  - 0% : affiche tous les patterns
-  - 80% : affiche seulement les excellents matches
-  
-- **Nombre max de rectangles** : limite l'affichage (ex : afficher top 10, top 50, ou tous)
-  - Laissez vide pour voir tous
+Une **légende** en haut du graphe rappelle ces codes couleurs.
 
-- **Boutons rapides** : 
-  - "Top 10", "Top 50" : affiche les meilleurs
-  - "≥80%", "≥50%" : affiche par seuil
-  - "Tout" : affiche tout sans limite
+### 5️⃣ Filtrer les résultats
 
-#### C) **Boutons de navigation**
-Sous le graphe :
-- **◀ / ▶** : allez au pattern précédent/suivant
-- **#X / total** : affiche votre position dans la liste
-- **"Réinitialiser"** : réinitialise le zoom et la sélection
+Un **panneau de filtres** semi-transparent apparaît à droite du graphe :
 
-#### D) **Monitoring de la détection** (section jaune)
-Titre : "Monitoring de la detection"
+- **Curseur "Seuil de similarité"** : déplacez-le pour ne garder que les résultats au-dessus d'un certain % (ex : 80% = uniquement les excellents)
+- **Nombre max** : limitez le nombre de rectangles affichés
+- **Boutons rapides** :
+  - **Top 10** / **Top 50** — les meilleurs résultats
+  - **≥ 80%** / **≥ 50%** — filtrer par seuil
+  - **Tout** — tout afficher
 
-Affiche :
-- **"Sauvegarder ce pattern"** (bouton vert) : sauvegardez le pattern actuel
-- **Distribution des similitudes** : barre colorée montrant excellent/bon/faible
-- **Pattern sélectionné** : infos du pattern (début, fin, durée, points, stats)
-- **Scores MASS** : meilleur/pire/moyen score trouvé
-- **Pipeline de recherche** : nombre de points scannés, temps d'exécution
+Les filtres s'appliquent **en temps réel** sur le graphe.
 
-#### E) **Liste des patterns similaires** (bas de page)
-Cartes cliquables montrant :
-- **Numéro** et **% de similarité**
-- **Dates** (début et fin)
-- **Score MASS** (valeur brute)
+### 6️⃣ Naviguer entre les résultats
 
-**Cliquez sur une carte** : le graphe se centre sur ce pattern et vous pouvez le voir surligne.
+Sous le graphe, des boutons permettent de :
+- **◀ / ▶** : passer au résultat précédent / suivant (le graphe zoome automatiquement dessus)
+- **Réinitialiser** : revenir à la vue complète
 
-### 4️⃣ Calculer la distribution des scores
+### 7️⃣ Tableau de bord (Monitoring)
 
-Si vous avez une sélection active :
+Sous le graphe, un panneau de monitoring affiche :
 
-1. Un bouton **"Calculer la distribution des scores"** apparaît
-2. Cliquez dessus
-3. Un **histogramme** s'affiche montrant tous les scores de similarité
+**Distribution des similitudes :**
+- Une barre colorée horizontale montrant la répartition excellent / bon / faible
+- 3 cartes avec le nombre et le pourcentage pour chaque catégorie
 
-Les patterns de votre sélection sont surlignés en rouge dans l'histogramme.
+**Informations sur le pattern sélectionné :**
+- Dates de début et fin
+- Durée
+- Statistiques : moyenne, écart-type, min, max, amplitude, énergie
+
+**Scores de la recherche :**
+- Meilleur score, score moyen, score médian, pire score
+
+**Pipeline :**
+- Taille de la série analysée, nombre de positions scannées, nombre de résultats, temps d'exécution
+
+### 8️⃣ Sauvegarder un pattern
+
+Dans le panneau de monitoring, cliquez sur **"Sauvegarder ce pattern"** :
+
+1. Un formulaire apparaît avec deux champs :
+   - **Nom** (obligatoire) : donnez un nom parlant (ex : "Cycle démarrage four")
+   - **Description** (optionnel) : ajoutez des notes
+2. Cliquez **"Confirmer"**
+3. Un message de confirmation vert apparaît
+
+Le pattern est désormais dans votre **Bibliothèque**.
+
+### 9️⃣ Cartes des résultats similaires
+
+En dessous du monitoring, les résultats s'affichent sous forme de **cartes cliquables** :
+
+- Chaque carte montre : numéro, % de similarité, dates, score brut
+- Les cartes ont une **bordure colorée** (vert / bleu / jaune) selon la qualité
+- **Cliquez sur une carte** : le graphe zoome automatiquement sur cette portion
+
+> Les cartes s'affichent par groupes de 20. Cliquez **"Afficher plus"** pour en voir davantage.
+
+### 🔟 Distribution des scores
+
+Un bouton **"Calculer la distribution"** permet d'afficher un **histogramme** montrant tous les scores de similarité calculés sur l'ensemble des données. Les résultats sélectionnés sont surlignés en rouge.
 
 ---
 
 ## Onglet Bibliothèque
 
-Ici vous **gérez les patterns sauvegardés**.
+Cliquez sur l'onglet **Bibliothèque** en haut pour accéder à vos patterns sauvegardés.
 
-### 1️⃣ Vue liste
+### Vue liste
 
 Chaque pattern sauvegardé est une **carte** montrant :
-- **Sparkline** (petit graphe en miniature)
-- **Nom** du pattern
-- **Badge** : nombre d'occurrences trouvées (ex : "312 occ.")
-- **Description** (si renseignée)
-- **Infos rapides** : durée, moyenne, écart-type, amplitude
+- Un **mini-graphe** (sparkline) de la forme du pattern
+- Le **nom** que vous lui avez donné
+- Un **badge** avec le nombre d'occurrences trouvées (ex : "312 occ.")
+- Des infos rapides : durée, moyenne, écart-type, amplitude
 
-**Pour voir plus de détails :** cliquez sur la carte.
+Cliquez sur **"Rafraîchir"** pour mettre à jour la liste après une sauvegarde.
 
-### 2️⃣ Vue détail (après clic)
+### Vue détail (après clic sur une carte)
 
-Vous verrez :
+En cliquant sur un pattern, vous accédez à sa fiche complète :
 
-#### En haut
-- **← Retour** : revenir à la liste
-- **Nom** et **description** du pattern
-- **Bouton "Supprimer"** (avec confirmation)
-- **Date de sauvegarde**
+**En haut :**
+- Bouton **← Retour** pour revenir à la liste
+- Nom, description, date de sauvegarde
+- Bouton **"Supprimer"**
 
-#### Courbe
-- **Graphe Plotly** : le pattern en bleu
-- **Ligne pointillée** : la moyenne (μ)
-- Au survol : affiche la valeur et la date exacte
+**Courbe :**
+- Le graphe complet du pattern avec un remplissage bleu-indigo
+- Une ligne pointillée indiquant la **moyenne**
 
-#### Répartition des occurrences (**LE INFO PRINCIPALE**)
-- **Barre visuelle** : proportion excellent/bon/faible
-- **3 cards** montrant :
-  - **Excellent (≥80%)** : nombre + %
-  - **Bon (50–79%)** : nombre + %
-  - **Faible (<50%)** : nombre + %
+**Répartition des occurrences (information clé) :**
+- Barre visuelle colorée (vert / bleu / jaune)
+- 3 cartes : Excellent (≥80%), Bon (50-79%), Faible (<50%)
 
-💡 **Comment interpréter :**
-- 80% excellent → **pattern très fiable**, à conserver
-- 10% excellent, 60% faible → **pattern peu fiable**, à supprimer
+> **Comment interpréter :**
+> - Beaucoup de vert → pattern très fiable, à conserver
+> - Beaucoup de jaune → pattern peu discriminant, envisagez de le supprimer
 
-#### Stats essentielles (bas)
-- **Points** : nombre de points dans le pattern
-- **Durée** : en heures
-- **Moyenne (μ)** : valeur moyenne (kW)
-- **Écart-type (σ)** : variabilité (kW)
-- **Min / Max / Amplitude** : plage couverte
+**Statistiques :**
+- Points, durée, moyenne, écart-type, min, max, amplitude
 
-#### Dates temporelles
-- **Début** : quand le pattern a commencé
-- **Fin** : quand il a fini
-- **Sauvegardé le** : quand vous l'avez enregistré
+**Dates :**
+- Début et fin du pattern, date de sauvegarde
 
-### 3️⃣ Supprimer un pattern
+### Supprimer un pattern
 
-En vue détail, cliquez **"Supprimer"** :
-
-1. Le bouton devient **"Confirmer"**
-2. Cliquez de nouveau pour confirmer
-3. Le pattern est supprimé et vous reveniez à la liste
+1. En vue détail, cliquez **"Supprimer"**
+2. Le bouton devient **"Confirmer la suppression"**
+3. Cliquez une seconde fois pour confirmer
+4. Vous revenez automatiquement à la liste
 
 ---
 
 ## Conseils d'utilisation
 
-### 📌 Comment sélectionner un bon pattern ?
+### Comment sélectionner un bon pattern ?
 
-1. **Choisir une zone régulière**
-   - Évitez les zones bruitées ou en transition
-   - Préférez une zone de 50–200 points (stabilité)
+1. **Choisissez une zone régulière** — évitez les zones bruitées ou en transition
+2. **Préférez 50 à 200 points** — ni trop court ni trop long
+3. **Vérifiez la distribution** après la recherche :
+   - Plus de 80% d'excellents → pattern fiable
+   - Moins de 50% d'excellents → pattern peu discriminant
 
-2. **Vérifier les résultats**
-   - Si aucun match : zéro résultat → le pattern n'existe pas
-   - Si peu de matches : pattern trop spécifique
-   - Si beaucoup de matches : pattern générique
+### Utiliser les filtres efficacement
 
-3. **Vérifier la distribution**
-   - **>80% excellent** → excellent pattern, à sauvegarder
-   - **<50% excellent** → pattern peu discriminant, à rejeter
+- **Cycle parfait ?** → seuil à 80%
+- **Variations acceptables ?** → seuil à 50%
+- **Vue d'ensemble rapide ?** → Top 10
 
-### 🎯 Utiliser les filtres efficacement
+### Stratégie de sauvegarde
 
-- **Vous cherchez un cycle parfait ?** → mettez 80% minimum
-- **Vous acceptez des variations ?** → mettez 50% minimum
-- **Vous voulez comparer 2 patterns** → sauvegardez-les d'abord
+1. Explorez plusieurs pages pour voir différentes périodes
+2. Pour chaque cycle intéressant : lancez la recherche
+3. Sauvegardez uniquement si la qualité est bonne (≥80% excellent)
+4. Dans la Bibliothèque : supprimez les patterns peu fiables
 
-### 💾 Stratégie de sauvegarde
+### Interprétation des statistiques
 
-1. **Analysez plusieurs cycles** dans le historique
-2. **Pour chaque cycle** : sauvegardez si ≥80% excellent
-3. **Dans la bibliothèque** : consultez la répartition pour valider
-4. **Supprimez les mauvais** : gardez seulement les patterns fiables
-
-### ⚙️ Gestion des pages
-
-- **Chaque page = 50 000 points**
-- **~36 pages** pour l'historique complet (~1,8M points)
-- **Naviguez** pour explorer des période différentes
-
-### 🔍 Interprétation des stats
-
-| Stat | Signification | Action |
+| Stat | Signification | Ce que ça veut dire |
 |---|---|---|
-| **Moyenne haute** | Cycle à haute puissance | Inutile pour basse puissance |
-| **Écart-type bas** | Cycle très régulier | Bon pour les alarmes |
-| **Amplitude grande** | Gros écart min/max | Vérifie si c'est normal |
-| **Durée longue** | Cycle lent | Attention aux seuils temps |
-
-### 🚨 Dépannage
-
-**Aucun resultat trouvé dans ma recherche ?**
-- La zone est trop courte (<10 points) → agrandissez-la
-- Le pattern n'existe pas dans l'historique → essayez une autre zone
-- Les données sont trop bruitées → choisissez une zone plus stable
-
-**Le graphe est vide ou blanc ?**
-- Attendez le chargement initial (~2–3 sec)
-- Naviguez vers une autre page
-- Rafraîchissez la page (F5)
-
-**Un pattern ne s'affiche pas dans la Bibliothèque ?**
-- Cliquez "Rafraîchir" en haut à droite
-- Vérifiez que la sauvegarde a réussi (message vert)
-
-**Beaucoup de patterns "Faible (<50%)" dans la répartition ?**
-- Le pattern est **peu discriminant** : trop générique
-- À supprimer pour ne garder que les patterns pertinents
+| **Moyenne haute** | Valeurs élevées en moyenne | Cycle à haute puissance/production |
+| **Écart-type bas** | Peu de variation | Cycle très régulier et stable |
+| **Amplitude grande** | Grand écart entre min et max | Cycle avec de fortes oscillations |
+| **Durée longue** | Beaucoup de points | Cycle lent, étalé dans le temps |
 
 ---
 
-## Raccourci clavier & astuces
+## Dépannage
 
-| Action | Résultat |
+| Problème | Solution |
 |---|---|
-| **Entrée** (dans champ page) | Aller à la page |
-| **Drag sur graphe** | Sélectionner un pattern |
-| **Clic pattern card** | Voir le pattern en détail / naviguer vers lui |
-| **"Rafraîchir"** bibliothèque | Recharger la liste (après sauvegarde) |
+| **"Erreur lors de la recherche"** | Vérifiez que le serveur backend est bien lancé. Vérifiez le terminal du backend pour les erreurs. |
+| **Aucun résultat trouvé** | La sélection est trop courte (< 10 points) → agrandissez-la. Ou le pattern n'existe pas dans l'historique. |
+| **Le graphe est vide** | Attendez le chargement (~2-3 sec). Essayez de changer de page ou rafraîchissez (F5). |
+| **La bibliothèque ne se met pas à jour** | Cliquez le bouton "Rafraîchir" en haut de la liste. |
+| **L'application ne s'ouvre pas** | Vérifiez que le backend tourne (terminal 1) et le frontend aussi (terminal 2). |
+| **Beaucoup de résultats "Faible"** | Le pattern est trop générique. Essayez de sélectionner une zone plus spécifique. |
 
 ---
 
 ## Questions fréquentes
 
-**Q: Combien de temps prend une recherche ?**  
-A: Généralement 0.5–2 sec selon la taille du pattern et du historique.
+**Q : Combien de temps prend une recherche ?**  
+R : Généralement 0.5 à 2 secondes selon la taille du pattern et du jeu de données.
 
-**Q: Peux-tu sauvegarder plusieurs fois le même pattern ?**  
-A: Oui, mais ils auront des IDs différents. Utilisez des noms distincts (ex: "Cycle-V1", "Cycle-V2").
+**Q : Peut-on sauvegarder plusieurs fois le même pattern ?**  
+R : Oui, ils auront des noms et IDs différents. Utilisez des noms distincts (ex : "Cycle-V1", "Cycle-V2").
 
-**Q: Peut-on exporter les patterns sauvegardés ?**  
-A: Actuellement, non. La bibliothèque est stockée en base de données locale (SQLite).
+**Q : Peut-on exporter les patterns ?**  
+R : Pas directement via l'interface. Les patterns sont stockés dans une base de données locale.
 
-**Q: Comment supprimer tous les patterns ?**  
-A: Allez dans la Bibliothèque et supprimez-les un par un.
+**Q : Peut-on analyser plusieurs jeux de données en même temps ?**  
+R : Non, un seul à la fois. Pour changer, cliquez "Changer" en haut et sélectionnez un autre jeu.
 
-**Q: Puis-je comparer 2 patterns directement ?**  
-A: Sauvegardez-les d'abord, puis comparez leurs stats dans la vue détail.
+**Q : Les patterns sauvegardés sont-ils partagés entre jeux de données ?**  
+R : La bibliothèque est globale. Vous pouvez sauvegarder des patterns de n'importe quel jeu de données.
+
+**Q : Que signifie le "score MASS" ?**  
+R : C'est la distance brute calculée par l'algorithme. Plus le score est **bas**, plus la similarité est **haute**. Le pourcentage affiché est la conversion inverse pour que ce soit plus intuitif.
+
+---
+
+## Raccourcis et astuces
+
+| Action | Comment faire |
+|---|---|
+| Aller à une page précise | Tapez le numéro dans le champ et appuyez Entrée |
+| Sélectionner un pattern | Cliquez-glissez horizontalement sur le graphe |
+| Zoomer sur un résultat | Cliquez sur sa carte dans la liste |
+| Changer de jeu de données | Bouton "Changer" dans la barre du haut |
+| Rafraîchir la bibliothèque | Bouton "Rafraîchir" en haut de la liste |
 
 ---
 
