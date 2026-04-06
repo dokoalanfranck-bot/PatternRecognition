@@ -70,3 +70,31 @@ export const comparePattern = async (id, start, end, dataset = null) => {
   const res = await API.post(`/patterns/${id}/compare`, body)
   return res.data
 }
+
+// ═══ Temps Réel ════════════════════════════════════════════════════════════════
+export const startRealtime = async (dataset, speed = 0.005, startIndex = 0, maxPoints = 0) => {
+  const res = await API.post("/realtime/start", {
+    dataset, speed, start_index: startIndex, max_points: maxPoints
+  })
+  return res.data
+}
+
+export const stopRealtime = async () => {
+  const res = await API.post("/realtime/stop")
+  return res.data
+}
+
+export const getRealtimeStatus = async () => {
+  const res = await API.get("/realtime/status")
+  return res.data
+}
+
+export const getRealtimeEvents = async (limit = 100) => {
+  const res = await API.get("/realtime/events", { params: { limit } })
+  return res.data
+}
+
+export const clearRealtimeEvents = async () => {
+  const res = await API.delete("/realtime/events")
+  return res.data
+}

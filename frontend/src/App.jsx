@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, memo } from "react"
 import { fetchData, computeAllScores } from "./api/api"
-import { Activity, ChevronLeft, ChevronRight, BarChart3, BookOpen, ArrowLeft, Loader } from "lucide-react"
+import { Activity, ChevronLeft, ChevronRight, BarChart3, BookOpen, Radio, ArrowLeft, Loader } from "lucide-react"
 import EnergyGraph from "./components/EnergyGraph"
 import SimilarPatterns from "./components/SimilarPatterns"
 import ScoreDistribution from "./components/ScoreDistribution"
 import MonitoringPanel from "./components/MonitoringPanel"
 import PatternLibrary from "./components/PatternLibrary"
+import RealtimeMonitor from "./components/RealtimeMonitor"
 import DatasetSelector from "./components/DatasetSelector"
 import "./App.css"
 
@@ -136,6 +137,10 @@ function App() {
             onClick={() => setTab("library")}>
             <BookOpen size={14} /> Bibliothèque
           </button>
+          <button className={`tab-pill ${tab === "realtime" ? "active" : ""}`}
+            onClick={() => setTab("realtime")}>
+            <Radio size={14} /> Temps Réel
+          </button>
         </div>
       </div>
 
@@ -190,6 +195,12 @@ function App() {
         {tab === "library" && (
           <div className="animate-in">
             <PatternLibrary refreshKey={libRefresh} />
+          </div>
+        )}
+
+        {tab === "realtime" && (
+          <div className="animate-in">
+            <RealtimeMonitor dataset={dataset} />
           </div>
         )}
       </div>

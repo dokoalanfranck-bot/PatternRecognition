@@ -28,6 +28,20 @@ def init_db():
             created_at  REAL    NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS realtime_events (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            pattern_id      INTEGER,
+            pattern_name    TEXT,
+            pattern_type    TEXT    DEFAULT 'normal',
+            split_index     INTEGER,
+            total_splits    INTEGER,
+            similarity      REAL,
+            confidence      TEXT    DEFAULT 'low',
+            details_json    TEXT    DEFAULT '{}',
+            created_at      REAL    NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -110,6 +124,60 @@ def update_pattern_type(pid, pattern_type):
 def delete_pattern(pid):
     conn = _get_conn()
     conn.execute("DELETE FROM patterns WHERE id = ?", (pid,))
+    conn.commit()
+    conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  REALTIME EVENTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def save_realtime_event(pattern_id, pattern_name, pattern_type, split_index,
+                        total_splits, similarity, confidence, details=None):
+    conn = _get_conn()
+    cur = conn.execute(
+        """INSERT INTO realtime_events
+           (pattern_id, pattern_name, pattern_type, split_index, total_splits,
+            similarity, confidence, details_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            pattern_id, pattern_name, pattern_type, split_index, total_splits,
+            similarity, confidence, json.dumps(details or {}), time.time(),
+        ),
+    )
+    conn.commit()
+    eid = cur.lastrowid
+    conn.close()
+    return eid
+
+
+def list_realtime_events(limit=100):
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM realtime_events ORDER BY created_at DESC LIMIT ?",
+        (limit,)
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            "id": r["id"],
+            "pattern_id": r["pattern_id"],
+            "pattern_name": r["pattern_name"],
+            "pattern_type": r["pattern_type"],
+            "split_index": r["split_index"],
+            "total_splits": r["total_splits"],
+            "similarity": r["similarity"],
+            "confidence": r["confidence"],
+            "details": json.loads(r["details_json"]),
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+def clear_realtime_events():
+    conn = _get_conn()
+    conn.execute("DELETE FROM realtime_events")
     conn.commit()
     conn.close()
 
