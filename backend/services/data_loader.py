@@ -9,6 +9,9 @@ DATASETS_DIR = Path(__file__).parent.parent / "datasets"
 # Chemin par défaut (rétrocompatibilité)
 CSV_PATH = DATASETS_DIR / "C2 elect kw.csv"
 
+# Paramètres de détection d'anomalies
+OUTLIER_IQR_FACTOR = 1.5  # Facteur pour l'IQR (Interquartile Range)
+
 
 def list_datasets():
     """Liste tous les fichiers CSV disponibles dans le dossier datasets."""
@@ -67,6 +70,27 @@ def load_dataset(filename=None):
     data = data.dropna()
 
     data = data.set_index("date")
+
+    # Détection des points extrêmes anormaux avec IQR
+    Q1 = data["value"].quantile(0.25)
+    Q3 = data["value"].quantile(0.75)
+    IQR = Q3 - Q1
+    
+    # Limites pour les outliers
+    lower_bound = Q1 - OUTLIER_IQR_FACTOR * IQR
+    upper_bound = Q3 + OUTLIER_IQR_FACTOR * IQR
+    
+    # Détecter les outliers
+    is_outlier = (data["value"] < lower_bound) | (data["value"] > upper_bound)
+    
+    # Corriger les outliers en les remplaçant par la moyenne mobile locale
+    if is_outlier.any():
+        moving_avg = data["value"].rolling(
+            window=10,
+            center=True,
+            min_periods=1
+        ).mean()
+        data.loc[is_outlier, "value"] = moving_avg[is_outlier]
 
     _cache[cache_key] = data
     return _cache[cache_key]

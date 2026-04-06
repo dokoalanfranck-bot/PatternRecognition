@@ -69,6 +69,7 @@ const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved, dataset 
   const [saving, setSaving] = useState(false)
   const [saveName, setSaveName] = useState("")
   const [saveDesc, setSaveDesc] = useState("")
+  const [patternType, setPatternType] = useState("normal")
   const [saveMsg, setSaveMsg] = useState(null)
   const [showSaveForm, setShowSaveForm] = useState(false)
 
@@ -80,18 +81,19 @@ const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved, dataset 
     setSaveMsg(null)
     try {
       const dist = monitoring?.distribution || null
-      const res = await savePattern(pi.start, pi.end, saveName.trim(), saveDesc.trim(), matchCount || 0, dist, dataset)
+      const res = await savePattern(pi.start, pi.end, saveName.trim(), saveDesc.trim(), matchCount || 0, dist, patternType, dataset)
       if (res.error) { setSaveMsg({ type: "error", text: res.error }) }
       else {
         setSaveMsg({ type: "ok", text: res.message })
         setSaveName("")
         setSaveDesc("")
+        setPatternType("normal")
         setShowSaveForm(false)
         if (onPatternSaved) onPatternSaved()
       }
     } catch { setSaveMsg({ type: "error", text: "Erreur réseau." }) }
     setSaving(false)
-  }, [saveName, saveDesc, monitoring, matchCount, onPatternSaved, dataset])
+  }, [saveName, saveDesc, patternType, monitoring, matchCount, onPatternSaved, dataset])
 
   if (!monitoring) return null
   const { pattern_info: pi, search_info: si, distribution, score_stats: ss } = monitoring
@@ -127,6 +129,42 @@ const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved, dataset 
               placeholder="Nom du pattern (obligatoire)" />
             <textarea className="input" value={saveDesc} onChange={e => setSaveDesc(e.target.value)}
               placeholder="Description (optionnel)" rows={2} />
+            
+            {/* Type de pattern */}
+            <div style={{ 
+              display: 'flex', gap: 12, padding: '12px', 
+              background: 'var(--surface-overlay)', borderRadius: 8,
+              border: '1px solid var(--border-subtle)'
+            }}>
+              <label style={{
+                display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                flex: 1, padding: '8px 12px', borderRadius: 6,
+                background: patternType === "normal" ? "rgba(34, 197, 94, 0.15)" : "transparent",
+                border: patternType === "normal" ? "1px solid var(--accent-emerald)" : "1px solid transparent",
+                transition: 'all 0.2s'
+              }}>
+                <input type="radio" name="patternType" value="normal" checked={patternType === "normal"}
+                  onChange={e => setPatternType(e.target.value)}
+                  style={{ cursor: 'pointer' }} />
+                <TrendingUp size={14} style={{ color: 'var(--accent-emerald)' }} />
+                <span style={{ fontSize: 13, fontWeight: 600 }}>Consommation Normale</span>
+              </label>
+              
+              <label style={{
+                display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                flex: 1, padding: '8px 12px', borderRadius: 6,
+                background: patternType === "failure" ? "rgba(239, 68, 68, 0.15)" : "transparent",
+                border: patternType === "failure" ? "1px solid var(--accent-rose)" : "1px solid transparent",
+                transition: 'all 0.2s'
+              }}>
+                <input type="radio" name="patternType" value="failure" checked={patternType === "failure"}
+                  onChange={e => setPatternType(e.target.value)}
+                  style={{ cursor: 'pointer' }} />
+                <AlertCircle size={14} style={{ color: 'var(--accent-rose)' }} />
+                <span style={{ fontSize: 13, fontWeight: 600 }}>Pattern de Panne</span>
+              </label>
+            </div>
+            
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="btn btn-success" onClick={handleSave} disabled={saving || !saveName.trim()}>
                 {saving ? "Sauvegarde…" : <><Check size={14} /> Confirmer</>}

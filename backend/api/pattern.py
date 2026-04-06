@@ -135,6 +135,9 @@ async def save_pattern_endpoint(request: dict):
     name = request.get("name", "").strip()
     description = request.get("description", "").strip()
     dataset = request.get("dataset")
+    pattern_type = request.get("pattern_type", "normal")
+    if pattern_type not in ("normal", "failure"):
+        pattern_type = "normal"
 
     if not name:
         return {"error": "Le nom du pattern est obligatoire."}
@@ -175,8 +178,9 @@ async def save_pattern_endpoint(request: dict):
 
     match_count = int(request.get("match_count", 0))
 
-    pid = db.save_pattern(name, description, values, dates_list, stats, match_count)
+    pid = db.save_pattern(name, description, values, dates_list, stats, match_count, pattern_type)
     return {"id": pid, "message": f"Pattern '{name}' sauvegardé."}
+
 
 
 @router.get("/patterns")
@@ -190,6 +194,21 @@ async def get_pattern_endpoint(pid: int):
     if not p:
         return {"error": "Pattern introuvable."}
     return p
+
+
+@router.put("/patterns/{pid}")
+async def update_pattern_endpoint(pid: int, request: dict):
+    """Mettre à jour les propriétés d'un pattern (type, description, etc.)"""
+    if not db.get_pattern(pid):
+        return {"error": "Pattern introuvable."}
+    
+    pattern_type = request.get("pattern_type")
+    if pattern_type:
+        if pattern_type not in ("normal", "failure"):
+            return {"error": "Type invalide. Utilisez 'normal' ou 'failure'."}
+        db.update_pattern_type(pid, pattern_type)
+    
+    return {"message": "Pattern mis à jour.", "id": pid}
 
 
 @router.delete("/patterns/{pid}")

@@ -24,6 +24,7 @@ def init_db():
             dates_json  TEXT    NOT NULL,
             stats_json  TEXT    NOT NULL,
             match_count INTEGER DEFAULT 0,
+            pattern_type TEXT    DEFAULT 'normal',
             created_at  REAL    NOT NULL
         )
     """)
@@ -31,12 +32,12 @@ def init_db():
     conn.close()
 
 
-def save_pattern(name, description, values, dates, stats, match_count):
+def save_pattern(name, description, values, dates, stats, match_count, pattern_type="normal"):
     conn = _get_conn()
     cur = conn.execute(
         """INSERT INTO patterns (name, description, values_json, dates_json,
-                                 stats_json, match_count, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                 stats_json, match_count, pattern_type, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             name,
             description,
@@ -44,6 +45,7 @@ def save_pattern(name, description, values, dates, stats, match_count):
             json.dumps(dates),
             json.dumps(stats),
             match_count,
+            pattern_type,
             time.time(),
         ),
     )
@@ -56,7 +58,7 @@ def save_pattern(name, description, values, dates, stats, match_count):
 def list_patterns():
     conn = _get_conn()
     rows = conn.execute(
-        "SELECT id, name, description, stats_json, match_count, created_at "
+        "SELECT id, name, description, stats_json, match_count, pattern_type, created_at "
         "FROM patterns ORDER BY created_at DESC"
     ).fetchall()
     conn.close()
@@ -68,6 +70,7 @@ def list_patterns():
             "description": r["description"],
             "stats": json.loads(r["stats_json"]),
             "match_count": r["match_count"],
+            "pattern_type": r["pattern_type"] or "normal",
             "created_at": r["created_at"],
         })
     return result
@@ -88,9 +91,20 @@ def get_pattern(pid):
         "values": json.loads(row["values_json"]),
         "dates": json.loads(row["dates_json"]),
         "stats": json.loads(row["stats_json"]),
+        "pattern_type": row["pattern_type"] or "normal",
         "match_count": row["match_count"],
         "created_at": row["created_at"],
     }
+
+
+def update_pattern_type(pid, pattern_type):
+    """Mettre à jour le type d'un pattern (normal ou failure)"""
+    if pattern_type not in ("normal", "failure"):
+        pattern_type = "normal"
+    conn = _get_conn()
+    conn.execute("UPDATE patterns SET pattern_type = ? WHERE id = ?", (pattern_type, pid))
+    conn.commit()
+    conn.close()
 
 
 def delete_pattern(pid):

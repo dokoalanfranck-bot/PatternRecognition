@@ -34,13 +34,18 @@ export const computeAllScores = async (start, end, nSubseq = 1000, dataset = nul
 }
 
 // ═══ Bibliothèque de patterns ══════════════════════════════════════════════════
-export const savePattern = async (start, end, name, description, matchCount, distribution, dataset = null) => {
+export const savePattern = async (start, end, name, description, matchCount, distribution, patternType = "normal", dataset = null) => {
   const body = {
     start, end, name, description, match_count: matchCount,
-    distribution: distribution || null
+    distribution: distribution || null, pattern_type: patternType
   }
   if (dataset) body.dataset = dataset
   const res = await API.post("/patterns/save", body)
+  return res.data
+}
+
+export const updatePattern = async (id, updates) => {
+  const res = await API.put(`/patterns/${id}`, updates)
   return res.data
 }
 

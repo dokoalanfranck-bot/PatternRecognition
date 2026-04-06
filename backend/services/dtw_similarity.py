@@ -3,7 +3,7 @@ import stumpy
 
 
 def z_normalize(x):
-    """Z-score normalization pour comparaison indépendante de l'amplitude."""
+   
     std = np.std(x)
     if std < 1e-10:
         return x - np.mean(x)
@@ -11,15 +11,7 @@ def z_normalize(x):
 
 
 def _get_non_overlapping_fast(distance_profile, k, exclusion_zone):
-    """
-    Version vectorisée de l'extraction non-chevauchante.
 
-    Stratégie : on trie le profil une seule fois (O(n log n))
-    puis on parcourt les candidats triés en ne gardant que ceux
-    qui ne chevauchent pas les précédents.
-
-    Si k <= 0, retourne TOUS les motifs non-chevauchants.
-    """
     sorted_indices = np.argsort(distance_profile)
 
     indices = []
@@ -44,13 +36,7 @@ def _get_non_overlapping_fast(distance_profile, k, exclusion_zone):
 
 
 def search_pattern(series, pattern, top_k=0):
-    """
-    Recherche les sous-séquences les plus similaires au pattern
-    dans la série via MASS (stumpy) en O(n log n).
-
-    top_k=0  → retourne TOUS les motifs non-chevauchants.
-    top_k>0  → retourne au plus top_k motifs.
-    """
+   
     pattern_len = len(pattern)
     pattern_amp = float(np.max(pattern) - np.min(pattern))
 

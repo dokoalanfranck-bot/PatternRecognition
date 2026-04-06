@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, memo } from "react"
 import Plot from "react-plotly.js"
-import { listPatterns, getPattern, deletePattern } from "../api/api"
+import { listPatterns, getPattern, deletePattern, updatePattern } from "../api/api"
 import {
   BookOpen, ArrowLeft, Trash2, Clock, TrendingUp, TrendingDown,
   Activity, Sigma, Target, Award, Minus, RefreshCw, ChevronRight,
@@ -136,12 +136,19 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
   const [loading, setLoading] = useState(true)
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [editingType, setEditingType] = useState(false)
+  const [updatingType, setUpdatingType] = useState(false)
+  const [newType, setNewType] = useState(null)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     getPattern(patternSummary.id).then(res => {
-      if (!cancelled) { setDetail(res); setLoading(false) }
+      if (!cancelled) { 
+        setDetail(res)
+        setNewType(res.pattern_type || "normal")
+        setLoading(false) 
+      }
     }).catch(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [patternSummary.id])
@@ -153,6 +160,22 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
       onDeleted()
     } catch { setDeleting(false) }
   }, [patternSummary.id, onDeleted])
+
+  const handleUpdateType = useCallback(async () => {
+    if (newType === detail.pattern_type) {
+      setEditingType(false)
+      return
+    }
+    setUpdatingType(true)
+    try {
+      await updatePattern(patternSummary.id, { pattern_type: newType })
+      setDetail({ ...detail, pattern_type: newType })
+      setEditingType(false)
+    } catch (e) {
+      console.error(e)
+    }
+    setUpdatingType(false)
+  }, [newType, detail, patternSummary.id])
 
   const computed = useMemo(() => {
     if (!detail?.values?.length) return null
@@ -266,6 +289,83 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Classification Section */}
+      <div className="section" style={{ borderLeft: '3px solid var(--accent-indigo)', marginBottom: 16 }}>
+        <h4 className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Classification du pattern</span>
+          {!editingType && (
+            <button className="btn btn-ghost" onClick={() => setEditingType(true)} style={{ fontSize: 11, padding: '4px 8px' }}>
+              Modifier
+            </button>
+          )}
+        </h4>
+        
+        {!editingType ? (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
+            background: detail.pattern_type === 'failure' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)',
+            borderRadius: 8, border: `1px solid ${detail.pattern_type === 'failure' ? 'var(--accent-rose)' : 'var(--accent-emerald)'}`
+          }}>
+            {detail.pattern_type === 'failure' ? (
+              <>
+                <AlertCircle size={20} style={{ color: 'var(--accent-rose)' }} />
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent-rose)' }}>Pattern de Panne</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Ce pattern représente un comportement d'anomalie ou de défaillance</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <TrendingUp size={20} style={{ color: 'var(--accent-emerald)' }} />
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent-emerald)' }}>Consommation Normale</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Ce pattern représente un fonctionnement normal du système</div>
+                </div>
+              </>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+              padding: '10px 12px', borderRadius: 6,
+              background: newType === "normal" ? "rgba(34, 197, 94, 0.15)" : "transparent",
+              border: newType === "normal" ? "1px solid var(--accent-emerald)" : "1px solid var(--border-subtle)",
+              transition: 'all 0.2s'
+            }}>
+              <input type="radio" name="typeEdit" value="normal" checked={newType === "normal"}
+                onChange={e => setNewType(e.target.value)}
+                style={{ cursor: 'pointer' }} />
+              <TrendingUp size={14} style={{ color: 'var(--accent-emerald)' }} />
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Consommation Normale</span>
+            </label>
+            
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+              padding: '10px 12px', borderRadius: 6,
+              background: newType === "failure" ? "rgba(239, 68, 68, 0.15)" : "transparent",
+              border: newType === "failure" ? "1px solid var(--accent-rose)" : "1px solid var(--border-subtle)",
+              transition: 'all 0.2s'
+            }}>
+              <input type="radio" name="typeEdit" value="failure" checked={newType === "failure"}
+                onChange={e => setNewType(e.target.value)}
+                style={{ cursor: 'pointer' }} />
+              <AlertCircle size={14} style={{ color: 'var(--accent-rose)' }} />
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Pattern de Panne</span>
+            </label>
+            
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <button className="btn btn-success" onClick={handleUpdateType} disabled={updatingType || newType === detail.pattern_type}>
+                {updatingType ? <Loader size={13} className="spinner" /> : "Enregistrer"}
+              </button>
+              <button className="btn" onClick={() => { setEditingType(false); setNewType(detail.pattern_type) }}>
+                Annuler
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Key metrics */}
@@ -435,10 +535,54 @@ const PatternLibrary = memo(({ refreshKey }) => {
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {patterns.map(p => (
-          <PatternCard key={p.id} pattern={p} onClick={setSelected} />
-        ))}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* Groupe : Consommation Normale */}
+        {(() => {
+          const normal = patterns.filter(p => (p.pattern_type || "normal") === "normal")
+          return normal.length > 0 ? (
+            <div>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
+                paddingBottom: 8, borderBottom: '1px solid var(--border-subtle)',
+              }}>
+                <TrendingUp size={16} style={{ color: 'var(--accent-emerald)' }} />
+                <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+                  Consommation Normale
+                </h4>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>({normal.length})</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {normal.map(p => (
+                  <PatternCard key={p.id} pattern={p} onClick={setSelected} />
+                ))}
+              </div>
+            </div>
+          ) : null
+        })()}
+
+        {/* Groupe : Patterns de Panne */}
+        {(() => {
+          const failures = patterns.filter(p => p.pattern_type === "failure")
+          return failures.length > 0 ? (
+            <div>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
+                paddingBottom: 8, borderBottom: '1px solid var(--border-subtle)',
+              }}>
+                <AlertCircle size={16} style={{ color: 'var(--accent-rose)' }} />
+                <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+                  Patterns de Panne
+                </h4>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>({failures.length})</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {failures.map(p => (
+                  <PatternCard key={p.id} pattern={p} onClick={setSelected} />
+                ))}
+              </div>
+            </div>
+          ) : null
+        })()}
       </div>
     </div>
   )
