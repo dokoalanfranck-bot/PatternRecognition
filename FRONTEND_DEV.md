@@ -148,7 +148,7 @@ App.jsx
 │
 └── (après sélection d'un dataset)
     │
-    ├── TopBar               (sticky : logo, nom dataset, tabs Analyse/Bibliothèque)
+    ├── TopBar               (sticky : logo, nom dataset, tabs Analyse/Bibliothèque/Temps Réel)
     │
     ├── [Tab: Analyse]
     │   ├── NavBar            (pagination : page X/Y, ◀ ▶, input)
@@ -160,10 +160,16 @@ App.jsx
     │   └── SimilarPatterns   (cartes cliquables)
     │       └── MatchCard × N
     │
-    └── [Tab: Bibliothèque]
-        └── PatternLibrary
-            ├── PatternCard × N  (liste avec sparklines)
-            └── PatternDetail    (vue détail : courbe, stats, distribution)
+    ├── [Tab: Bibliothèque]
+    │   └── PatternLibrary
+    │       ├── PatternCard × N  (liste avec sparklines)
+    │       └── PatternDetail    (vue détail : courbe, stats, distribution)
+    │
+    └── [Tab: Temps Réel]
+        └── RealtimeMonitor
+            ├── AlertBanner       (bandeau alerte globale + pipeline dots)
+            ├── TrackerCard × N   (jauge SVG + timeline + overlay Z-norm)
+            └── EventCard × N     (transitions d'états)
 ```
 
 ---
@@ -302,6 +308,53 @@ Deux vues :
 
 ---
 
+### `RealtimeMonitor.jsx` — Early Warning System
+
+Composant de monitoring temps réel. ~500 lignes. Polling toutes les 600ms.
+
+**Sous-composants internes :**
+
+| Composant | Rôle |
+|---|---|
+| `AlertBanner` | Bandeau d'alerte globale avec icône, label, pipeline de 5 dots connectés |
+| `TrackerCard` | Carte par pattern : header (nom, type, gauge SVG), body (timeline + overlay) |
+| `EventCard` | Rendu d'un événement (start/end/error/state_change) avec badges colorés |
+
+**Configuration `LEVEL_META` :**
+
+| Niveau | Couleur | Icône |
+|---|---|---|
+| `idle` | `#64748b` (gris) | `Shield` |
+| `watching` | `#60a5fa` (bleu) | `Eye` |
+| `warning` | `#fbbf24` (ambre) | `AlertTriangle` |
+| `alert` | `#f97316` (orange) | `AlertCircle` |
+| `confirmed` | `#ef4444` (rouge) | `Zap` |
+
+**État local :**
+
+| State | Type | Description |
+|---|---|---|
+| `status` | `Object` | Réponse complète de `/realtime/status` |
+| `starting` | `boolean` | Flag pendant le démarrage |
+| `speed` | `number` | Vitesse de simulation (s/pt) |
+| `maxPoints` | `number` | Limite de points (0 = illimité) |
+
+**Données extraites de `status` :**
+- `status.trackers` — tableau de tracker dicts (un par pattern)
+- `status.global_alert_level` — niveau max parmi tous les trackers
+- `status.thresholds` — seuils de transition de la machine à états
+- `status.events` — 30 derniers événements
+- `status.simulation_progress` — % d'avancement
+- `status.buffer_size`, `status.total_points_received`, `status.active_patterns_count`
+
+**TrackerCard — détails graphiques :**
+- **Gauge SVG** : cercle de rayon 36, stroke-dasharray/offset animé, couleur dynamique selon similarité
+- **Timeline** : Plotly line chart avec fill tozeroy, shapes de seuils en pointillés
+- **Overlay Z-Norm** : z-normalisation des deux courbes (pattern_data vs matched_segment), superposition
+- **zNorm()** : `(v - mean) / sigma` appliqué point par point
+
+---
+
 ## Client API
 
 Fichier `api/api.js` — tous les appels HTTP centralisés :
@@ -322,6 +375,11 @@ const API = axios.create({ baseURL: "http://127.0.0.1:8000" })
 | `getPattern(id)` | GET | `/patterns/{id}` | Détail d'un pattern |
 | `deletePattern(id)` | DELETE | `/patterns/{id}` | Supprimer un pattern |
 | `comparePattern(id, dataset)` | POST | `/patterns/{id}/compare` | Comparer un pattern |
+| `startRealtime(dataset, speed, startIndex, maxPoints)` | POST | `/realtime/start` | Démarrer la simulation temps réel |
+| `stopRealtime()` | POST | `/realtime/stop` | Arrêter la simulation |
+| `getRealtimeStatus()` | GET | `/realtime/status` | État courant du moteur (trackers, buffer, events) |
+| `getRealtimeEvents(limit)` | GET | `/realtime/events` | Historique des événements en base |
+| `clearRealtimeEvents()` | DELETE | `/realtime/events` | Supprimer l'historique |
 
 > `detectPattern` accepte un `AbortController.signal` pour annuler les requêtes en cours.
 

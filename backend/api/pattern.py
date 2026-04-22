@@ -136,8 +136,14 @@ async def save_pattern_endpoint(request: dict):
     description = request.get("description", "").strip()
     dataset = request.get("dataset")
     pattern_type = request.get("pattern_type", "normal")
+    alert_threshold = float(request.get("alert_threshold", 55.0))
+    alert_type = request.get("alert_type", "anomaly")
+    
     if pattern_type not in ("normal", "failure"):
         pattern_type = "normal"
+    if alert_type not in ("anomaly", "failure"):
+        alert_type = "anomaly"
+    alert_threshold = max(0.0, min(100.0, alert_threshold))
 
     if not name:
         return {"error": "Le nom du pattern est obligatoire."}
@@ -178,14 +184,16 @@ async def save_pattern_endpoint(request: dict):
 
     match_count = int(request.get("match_count", 0))
 
-    pid = db.save_pattern(name, description, values, dates_list, stats, match_count, pattern_type)
-    return {"id": pid, "message": f"Pattern '{name}' sauvegardé."}
+    pid = db.save_pattern(name, description, values, dates_list, stats, match_count, 
+                          pattern_type, alert_threshold, alert_type, dataset=dataset or "")
+    return {"id": pid, "message": f"Pattern '{name}' sauvegardé avec seuil {alert_threshold}%.",
+            "alert_threshold": alert_threshold, "alert_type": alert_type}
 
 
 
 @router.get("/patterns")
-async def list_patterns_endpoint():
-    return {"patterns": db.list_patterns()}
+async def list_patterns_endpoint(dataset: str = None):
+    return {"patterns": db.list_patterns(dataset=dataset)}
 
 
 @router.get("/patterns/{pid}")
@@ -198,7 +206,7 @@ async def get_pattern_endpoint(pid: int):
 
 @router.put("/patterns/{pid}")
 async def update_pattern_endpoint(pid: int, request: dict):
-    """Mettre à jour les propriétés d'un pattern (type, description, etc.)"""
+    """Mettre à jour les propriétés d'un pattern (type, seuil, alert_type, description)."""
     if not db.get_pattern(pid):
         return {"error": "Pattern introuvable."}
     
@@ -207,8 +215,20 @@ async def update_pattern_endpoint(pid: int, request: dict):
         if pattern_type not in ("normal", "failure"):
             return {"error": "Type invalide. Utilisez 'normal' ou 'failure'."}
         db.update_pattern_type(pid, pattern_type)
+
+    alert_threshold = request.get("alert_threshold")
+    alert_type = request.get("alert_type")
+    if alert_threshold is not None or alert_type is not None:
+        if alert_threshold is not None:
+            alert_threshold = max(0.0, min(100.0, float(alert_threshold)))
+        if alert_type is not None and alert_type not in ("anomaly", "failure"):
+            return {"error": "alert_type invalide. Utilisez 'anomaly' ou 'failure'."}
+        db.update_pattern_threshold(pid, alert_threshold, alert_type)
     
-    return {"message": "Pattern mis à jour.", "id": pid}
+    updated = db.get_pattern(pid)
+    return {"message": "Pattern mis à jour.", "id": pid,
+            "alert_threshold": updated.get("alert_threshold"), 
+            "alert_type": updated.get("alert_type")}
 
 
 @router.delete("/patterns/{pid}")

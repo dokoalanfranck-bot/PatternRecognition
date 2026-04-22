@@ -11,10 +11,21 @@ export const fetchDatasets = async () => {
 }
 
 // ═══ Données ═══════════════════════════════════════════════════════════════════
-export const fetchData = async (page = 0, pageSize = 50000, dataset = null) => {
-  const params = { page, page_size: pageSize }
+export const fetchData = async (period = "month", offset = 0, dataset = null, startDate = null, endDate = null) => {
+  const params = { period, offset }
   if (dataset) params.dataset = dataset
+  if (period === "custom" && startDate && endDate) {
+    params.start = startDate
+    params.end = endDate
+  }
   const res = await API.get("/data", { params })
+  return res.data
+}
+
+export const fetchDataRange = async (dataset = null) => {
+  const params = {}
+  if (dataset) params.dataset = dataset
+  const res = await API.get("/data/range", { params })
   return res.data
 }
 
@@ -34,10 +45,11 @@ export const computeAllScores = async (start, end, nSubseq = 1000, dataset = nul
 }
 
 // ═══ Bibliothèque de patterns ══════════════════════════════════════════════════
-export const savePattern = async (start, end, name, description, matchCount, distribution, patternType = "normal", dataset = null) => {
+export const savePattern = async (start, end, name, description, matchCount, distribution, patternType = "normal", alertThreshold = 55.0, alertType = "anomaly", dataset = null) => {
   const body = {
     start, end, name, description, match_count: matchCount,
-    distribution: distribution || null, pattern_type: patternType
+    distribution: distribution || null, pattern_type: patternType,
+    alert_threshold: alertThreshold, alert_type: alertType
   }
   if (dataset) body.dataset = dataset
   const res = await API.post("/patterns/save", body)
@@ -49,8 +61,10 @@ export const updatePattern = async (id, updates) => {
   return res.data
 }
 
-export const listPatterns = async () => {
-  const res = await API.get("/patterns")
+export const listPatterns = async (dataset = null) => {
+  const params = {}
+  if (dataset) params.dataset = dataset
+  const res = await API.get("/patterns", { params })
   return res.data
 }
 

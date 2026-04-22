@@ -9,13 +9,14 @@ const CATEGORY_COLORS = {
 
 const FilterPanel = memo(({ allMatches, onFilterChange }) => {
   const [open, setOpen] = useState(true)
-  const [minSimilarity, setMinSimilarity] = useState(80)
+  const [minSimilarity, setMinSimilarity] = useState(0)
+  const [maxSimilarity, setMaxSimilarity] = useState(100)
   const [maxCount, setMaxCount] = useState("50")
   const prevLenRef = useRef(0)
 
-  const apply = useCallback((sim, count) => {
+  const apply = useCallback((minSim, maxSim, count) => {
     const filtered = allMatches
-      .filter(m => m.similarity >= sim)
+      .filter(m => (m.similarity ?? 0) >= minSim && (m.similarity ?? 0) <= maxSim)
       .sort((a, b) => b.similarity - a.similarity)
     const limited = count && !isNaN(count) && parseInt(count) > 0
       ? filtered.slice(0, parseInt(count))
@@ -26,37 +27,50 @@ const FilterPanel = memo(({ allMatches, onFilterChange }) => {
   useEffect(() => {
     if (allMatches.length > 0 && allMatches.length !== prevLenRef.current) {
       prevLenRef.current = allMatches.length
-      setMinSimilarity(80)
+      setMinSimilarity(0)
+      setMaxSimilarity(100)
       setMaxCount("50")
-      apply(80, "50")
+      apply(0, 100, "50")
     }
   }, [allMatches, apply])
 
   const counts = {
     total:     allMatches.length,
-    excellent: allMatches.filter(m => m.similarity >= 80).length,
-    good:      allMatches.filter(m => m.similarity >= 50 && m.similarity < 80).length,
-    low:       allMatches.filter(m => m.similarity < 50).length,
+    excellent: allMatches.filter(m => (m.similarity ?? 0) >= 80).length,
+    good:      allMatches.filter(m => (m.similarity ?? 0) >= 50 && (m.similarity ?? 0) < 80).length,
+    low:       allMatches.filter(m => (m.similarity ?? 0) < 50).length,
   }
 
-  const passFilter = allMatches.filter(m => m.similarity >= minSimilarity).length
+  const passFilter = allMatches.filter(m => {
+    const sim = m.similarity ?? 0
+    return sim >= minSimilarity && sim <= maxSimilarity
+  }).length
 
   const handleSimilarityChange = useCallback((e) => {
     const val = Math.min(100, Math.max(0, Number(e.target.value)))
     setMinSimilarity(val)
-    apply(val, maxCount)
-  }, [apply, maxCount])
+    if (val > maxSimilarity) setMaxSimilarity(val)
+    apply(val, Math.max(val, maxSimilarity), maxCount)
+  }, [apply, maxCount, maxSimilarity])
+
+  const handleMaxSimilarityChange = useCallback((e) => {
+    const val = Math.min(100, Math.max(0, Number(e.target.value)))
+    setMaxSimilarity(val)
+    if (val < minSimilarity) setMinSimilarity(val)
+    apply(Math.min(val, minSimilarity), val, maxCount)
+  }, [apply, maxCount, minSimilarity])
 
   const handleCountChange = useCallback((e) => {
     const val = e.target.value
     setMaxCount(val)
-    apply(minSimilarity, val)
-  }, [apply, minSimilarity])
+    apply(minSimilarity, maxSimilarity, val)
+  }, [apply, minSimilarity, maxSimilarity])
 
-  const applyPreset = useCallback((sim) => {
-    setMinSimilarity(sim)
+  const applyPreset = useCallback((minSim, maxSim) => {
+    setMinSimilarity(minSim)
+    setMaxSimilarity(maxSim)
     setMaxCount("")
-    apply(sim, "")
+    apply(minSim, maxSim, "")
   }, [apply])
 
   if (allMatches.length === 0) return null
@@ -117,18 +131,71 @@ const FilterPanel = memo(({ allMatches, onFilterChange }) => {
             </div>
           </div>
 
-          {/* Similarity slider */}
+          {/* Bandes de couleur avec intervalle */}
           <div>
             <label style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8, display: 'block', fontSize: 12 }}>
-              Similarité minimum : <span style={{ color: 'var(--accent-indigo)' }}>{minSimilarity}%</span>
+              Intervalle de similarité
             </label>
-            <input type="range" min={0} max={100} step={1} value={minSimilarity} onChange={handleSimilarityChange} />
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
-              <input type="number" className="input" min={0} max={100} step={5}
-                value={minSimilarity} onChange={handleSimilarityChange}
-                style={{ width: 65, padding: '4px 8px', fontSize: 12 }}
-              />
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>→ {passFilter} patterns</span>
+            
+            {/* Bandes colorées */}
+            <div style={{ display: 'flex', gap: 1, height: 28, borderRadius: 6, overflow: 'hidden', marginBottom: 8 }}>
+              {[
+                { min: 0, max: 30, color: '#ef4444', label: 'Très peu' },
+                { min: 30, max: 50, color: '#f97316', label: 'Peu' },
+                { min: 50, max: 70, color: '#fbbf24', label: 'Moyen' },
+                { min: 70, max: 85, color: '#60a5fa', label: 'Bien' },
+                { min: 85, max: 100, color: '#34d399', label: 'Très bien' },
+              ].map((band) => {
+                const isInRange = minSimilarity <= band.max && maxSimilarity >= band.min
+                return (
+                  <div
+                    key={`${band.min}-${band.max}`}
+                    onClick={() => applyPreset(band.min, band.max)}
+                    style={{
+                      flex: 1,
+                      background: band.color,
+                      opacity: isInRange ? 1 : 0.2,
+                      transition: 'opacity 0.2s ease',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      position: 'relative',
+                    }}
+                    title={`${band.label}: ${band.min}%-${band.max}%`}
+                  >
+                    <span style={{
+                      fontSize: 8,
+                      color: '#fff',
+                      fontWeight: 700,
+                      textShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                      pointerEvents: 'none',
+                    }}>
+                      {band.min}%
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Sliders pour min et max */}
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+                  Min: <span style={{ color: 'var(--accent-indigo)', fontWeight: 700 }}>{minSimilarity}%</span>
+                </label>
+                <input type="range" min={0} max={100} step={1} value={minSimilarity} onChange={handleSimilarityChange}
+                  style={{ width: '100%', height: 5, borderRadius: 3, background: 'linear-gradient(90deg, #ef4444, #34d399)', outline: 'none' }}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+                  Max: <span style={{ color: 'var(--accent-indigo)', fontWeight: 700 }}>{maxSimilarity}%</span>
+                </label>
+                <input type="range" min={0} max={100} step={1} value={maxSimilarity} onChange={handleMaxSimilarityChange}
+                  style={{ width: '100%', height: 5, borderRadius: 3, background: 'linear-gradient(90deg, #ef4444, #34d399)', outline: 'none' }}
+                />
+              </div>
             </div>
           </div>
 
@@ -147,15 +214,14 @@ const FilterPanel = memo(({ allMatches, onFilterChange }) => {
             <label style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8, display: 'block', fontSize: 12 }}>Raccourcis</label>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {[
-                { label: "Top 10", sim: 0, count: "10" },
-                { label: "Top 50", sim: 0, count: "50" },
-                { label: "≥80%",   sim: 80, count: "" },
-                { label: "≥50%",   sim: 50, count: "" },
-                { label: "Tout",   sim: 0,  count: "" },
-              ].map(({ label, sim, count }) => (
+                { label: "Très bien", minSim: 85, maxSim: 100, count: "" },
+                { label: "Bien", minSim: 70, maxSim: 85, count: "" },
+                { label: "Moyen", minSim: 50, maxSim: 70, count: "" },
+                { label: "Tous", minSim: 0, maxSim: 100, count: "" },
+              ].map(({ label, minSim, maxSim, count }) => (
                 <button key={label} className="badge badge-indigo"
-                  onClick={() => { setMinSimilarity(sim); setMaxCount(count); apply(sim, count) }}
-                  style={{ cursor: 'pointer', border: '1px solid rgba(129,140,248,0.2)' }}
+                  onClick={() => { setMinSimilarity(minSim); setMaxSimilarity(maxSim); setMaxCount(count); apply(minSim, maxSim, count) }}
+                  style={{ cursor: 'pointer', border: '1px solid rgba(129,140,248,0.2)', fontSize: 10 }}
                 >
                   {label}
                 </button>
@@ -177,7 +243,9 @@ const FilterPanel = memo(({ allMatches, onFilterChange }) => {
                 : passFilter}{" "}
               rectangles
             </strong>
-            {minSimilarity > 0 && <span> · seuil ≥{minSimilarity}%</span>}
+            {(minSimilarity > 0 || maxSimilarity < 100) && 
+              <span> · plage {minSimilarity}%—{maxSimilarity}%</span>
+            }
           </div>
         </div>
       )}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, memo } from "react"
-import { fetchData, computeAllScores } from "./api/api"
-import { Activity, ChevronLeft, ChevronRight, BarChart3, BookOpen, Radio, ArrowLeft, Loader } from "lucide-react"
+import { fetchData, fetchDataRange, computeAllScores } from "./api/api"
+import { Activity, ChevronLeft, ChevronRight, BarChart3, BookOpen, Radio, ArrowLeft, Loader, Calendar, Search } from "lucide-react"
 import EnergyGraph from "./components/EnergyGraph"
 import SimilarPatterns from "./components/SimilarPatterns"
 import ScoreDistribution from "./components/ScoreDistribution"
@@ -10,30 +10,92 @@ import RealtimeMonitor from "./components/RealtimeMonitor"
 import DatasetSelector from "./components/DatasetSelector"
 import "./App.css"
 
-const NavBar = memo(({ page, pageInfo, loading, onPrev, onNext, onGoto }) => (
+const PERIODS = [
+  { key: "day",   label: "Jour" },
+  { key: "week",  label: "Semaine" },
+  { key: "month", label: "Mois" },
+  { key: "year",  label: "Année" },
+  { key: "custom", label: "Personnalisé" },
+]
+
+const MONTH_NAMES = [
+  "Janvier","Février","Mars","Avril","Mai","Juin",
+  "Juillet","Août","Septembre","Octobre","Novembre","Décembre"
+]
+
+function formatPeriodLabel(period, info) {
+  if (!info?.current_start) return ""
+  const d = new Date(info.current_start)
+  if (period === "day") {
+    return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+  }
+  if (period === "week") {
+    const end = new Date(info.current_end)
+    end.setDate(end.getDate() - 1)
+    const fmt = (dt) => dt.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })
+    return `${fmt(d)} — ${fmt(end)} ${end.getFullYear()}`
+  }
+  if (period === "month") {
+    return `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`
+  }
+  if (period === "year") {
+    return `${d.getFullYear()}`
+  }
+  return ""
+}
+
+const NavBar = memo(({ period, offset, periodInfo, loading, onPrev, onNext, onPeriodChange,
+  customStart, customEnd, onCustomStartChange, onCustomEndChange, onCustomSearch, dataRange }) => (
   <div className="nav-bar animate-in">
-    <button className="btn btn-sm" onClick={onPrev} disabled={page === 0 || loading}>
-      <ChevronLeft size={14} /> Précédent
-    </button>
-    <span className="page-info">
-      Page {page + 1} / {pageInfo.total_pages}
-    </span>
-    <button className="btn btn-sm" onClick={onNext} disabled={page >= pageInfo.total_pages - 1 || loading}>
-      Suivant <ChevronRight size={14} />
-    </button>
-    <span style={{ color: 'var(--border-default)' }}>|</span>
-    <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-      Aller à :
-      <input type="number" min={1} max={pageInfo.total_pages}
-        defaultValue={page + 1} key={page}
-        onKeyDown={e => {
-          if (e.key === "Enter") {
-            const v = Math.max(0, Math.min(pageInfo.total_pages - 1, parseInt(e.target.value, 10) - 1))
-            if (!isNaN(v)) onGoto(v)
-          }
-        }}
-      />
-    </label>
+    <div className="period-selector">
+      {PERIODS.map(p => (
+        <button key={p.key}
+          className={`period-btn ${period === p.key ? "active" : ""}`}
+          onClick={() => onPeriodChange(p.key)}>
+          {p.label}
+        </button>
+      ))}
+    </div>
+
+    {period !== "custom" ? (
+      <>
+        <div className="period-nav">
+          <button className="btn btn-sm" onClick={onPrev} disabled={offset === 0 || loading}>
+            <ChevronLeft size={14} />
+          </button>
+          <span className="period-label">
+            <Calendar size={13} style={{ opacity: 0.5 }} />
+            {formatPeriodLabel(period, periodInfo)}
+          </span>
+          <button className="btn btn-sm" onClick={onNext}
+            disabled={offset >= (periodInfo?.total_periods ?? 1) - 1 || loading}>
+            <ChevronRight size={14} />
+          </button>
+        </div>
+      </>
+    ) : (
+      <div className="custom-range">
+        <label className="range-field">
+          <span>Du</span>
+          <input type="date" value={customStart}
+            min={dataRange?.min_date?.slice(0, 10)}
+            max={dataRange?.max_date?.slice(0, 10)}
+            onChange={e => onCustomStartChange(e.target.value)} />
+        </label>
+        <label className="range-field">
+          <span>Au</span>
+          <input type="date" value={customEnd}
+            min={dataRange?.min_date?.slice(0, 10)}
+            max={dataRange?.max_date?.slice(0, 10)}
+            onChange={e => onCustomEndChange(e.target.value)} />
+        </label>
+        <button className="btn btn-primary btn-sm" onClick={onCustomSearch}
+          disabled={!customStart || !customEnd || loading}>
+          <Search size={13} /> Afficher
+        </button>
+      </div>
+    )}
+
     <span className="total-info">
       {loading ? (
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -41,7 +103,7 @@ const NavBar = memo(({ page, pageInfo, loading, onPrev, onNext, onGoto }) => (
           Chargement…
         </span>
       ) : (
-        `${pageInfo.total_points.toLocaleString()} points au total`
+        `${(periodInfo?.period_points ?? 0).toLocaleString()} points`
       )}
     </span>
   </div>
@@ -55,25 +117,54 @@ function App() {
   const [monitoring, setMonitoring] = useState(null)
   const [focusedMatch, setFocusedMatch] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [page, setPage] = useState(0)
-  const [pageInfo, setPageInfo] = useState(null)
+  const [period, setPeriod] = useState("month")
+  const [offset, setOffset] = useState(0)
+  const [periodInfo, setPeriodInfo] = useState(null)
   const [scoreBusy, setScoreBusy] = useState(false)
   const [lastSelection, setLastSelection] = useState(null)
   const [tab, setTab] = useState("analyse")
   const [libRefresh, setLibRefresh] = useState(0)
+  const [filterMin, setFilterMin] = useState(0)
+  const [filterMax, setFilterMax] = useState(100)
+  const [customStart, setCustomStart] = useState("")
+  const [customEnd, setCustomEnd] = useState("")
+  const [dataRange, setDataRange] = useState(null)
+  const [customTrigger, setCustomTrigger] = useState(0)
+
+  // Fetch date range when dataset changes
+  useEffect(() => {
+    if (!dataset) return
+    fetchDataRange(dataset).then(setDataRange).catch(() => {})
+  }, [dataset])
 
   useEffect(() => {
     if (!dataset) return
+    if (period === "custom") return  // custom is triggered manually
     setLoading(true)
-    fetchData(page, 50000, dataset)
-      .then(res => { setData(res.points); setPageInfo(res); setLoading(false) })
+    fetchData(period, offset, dataset)
+      .then(res => { setData(res.points); setPeriodInfo(res); setLoading(false) })
       .catch(() => setLoading(false))
-  }, [page, dataset])
+  }, [period, offset, dataset])
+
+  // Custom range fetch
+  useEffect(() => {
+    if (!dataset || period !== "custom" || !customStart || !customEnd || customTrigger === 0) return
+    setLoading(true)
+    fetchData("custom", 0, dataset, customStart, customEnd)
+      .then(res => { setData(res.points); setPeriodInfo(res); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [customTrigger])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleCustomSearch = useCallback(() => {
+    if (customStart && customEnd) setCustomTrigger(t => t + 1)
+  }, [customStart, customEnd])
 
   const handleMonitoring = useCallback((m) => {
     setMonitoring(m)
     if (m?.pattern_info) setLastSelection({ start: m.pattern_info.start, end: m.pattern_info.end })
     setAllScores([])
+    setFilterMin(0)
+    setFilterMax(100)
   }, [])
 
   const handleComputeScores = useCallback(async () => {
@@ -88,15 +179,23 @@ function App() {
 
   const handlePatternSaved = useCallback(() => { setLibRefresh(k => k + 1) }, [])
 
+  const handleFilterChange = useCallback((range) => {
+    setFilterMin(range.min)
+    setFilterMax(range.max)
+  }, [])
+
   const handleSelectDataset = useCallback((filename) => {
     setDataset(filename)
-    setPage(0)
+    setPeriod("month")
+    setOffset(0)
     setData([])
     setMatches([])
     setAllScores([])
     setMonitoring(null)
-    setPageInfo(null)
+    setPeriodInfo(null)
     setTab("analyse")
+    setFilterMin(0)
+    setFilterMax(100)
   }, [])
 
   const handleBackToSelector = useCallback(() => {
@@ -105,7 +204,9 @@ function App() {
     setMatches([])
     setAllScores([])
     setMonitoring(null)
-    setPageInfo(null)
+    setPeriodInfo(null)
+    setFilterMin(0)
+    setFilterMax(100)
   }, [])
 
   const showScoreButton = matches.length > 0 && allScores.length === 0
@@ -148,11 +249,14 @@ function App() {
       <div style={{ maxWidth: 1440, margin: '0 auto', padding: '20px 24px 40px' }}>
         {tab === "analyse" && (
           <div className="animate-in">
-            {pageInfo && (
-              <NavBar page={page} pageInfo={pageInfo} loading={loading}
-                onPrev={() => setPage(p => Math.max(0, p - 1))}
-                onNext={() => setPage(p => p + 1)}
-                onGoto={setPage}
+            {(periodInfo || period === "custom") && (
+              <NavBar period={period} offset={offset} periodInfo={periodInfo} loading={loading}
+                onPrev={() => setOffset(o => Math.max(0, o - 1))}
+                onNext={() => setOffset(o => o + 1)}
+                onPeriodChange={(p) => { setPeriod(p); setOffset(0) }}
+                customStart={customStart} customEnd={customEnd}
+                onCustomStartChange={setCustomStart} onCustomEndChange={setCustomEnd}
+                onCustomSearch={handleCustomSearch} dataRange={dataRange}
               />
             )}
 
@@ -188,13 +292,13 @@ function App() {
             )}
 
             <ScoreDistribution allScores={allScores} matches={matches} />
-            <SimilarPatterns matches={matches} onNavigate={setFocusedMatch} />
+            <SimilarPatterns matches={matches} onNavigate={setFocusedMatch} filterMin={filterMin} filterMax={filterMax} />
           </div>
         )}
 
         {tab === "library" && (
           <div className="animate-in">
-            <PatternLibrary refreshKey={libRefresh} />
+            <PatternLibrary refreshKey={libRefresh} dataset={dataset} />
           </div>
         )}
 

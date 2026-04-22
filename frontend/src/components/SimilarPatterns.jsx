@@ -1,4 +1,4 @@
-import React, { useState, useCallback, memo } from "react"
+import React, { useState, useCallback, memo, useMemo } from "react"
 import { Clock, ChevronDown, Navigation, Award, Target, TrendingDown } from "lucide-react"
 
 const VISIBLE_STEP = 20
@@ -81,8 +81,17 @@ const MatchCard = memo(({ match, index, onNavigate }) => {
   )
 })
 
-const SimilarPatterns = memo(({ matches, onNavigate }) => {
+const SimilarPatterns = memo(({ matches, onNavigate, filterMin = 0, filterMax = 100 }) => {
   const [visibleCount, setVisibleCount] = useState(VISIBLE_STEP)
+
+  // Filtrer les matches selon l'intervalle
+  const filtered = useMemo(() => {
+    if (!matches) return []
+    return matches.filter(m => {
+      const sim = m.similarity ?? 0
+      return sim >= filterMin && sim <= filterMax
+    })
+  }, [matches, filterMin, filterMax])
 
   const handleShowMore = useCallback(() => {
     setVisibleCount(c => c + VISIBLE_STEP)
@@ -100,8 +109,20 @@ const SimilarPatterns = memo(({ matches, onNavigate }) => {
     )
   }
 
-  const visible = matches.slice(0, visibleCount)
-  const hasMore = visibleCount < matches.length
+  if (filtered.length === 0) {
+    return (
+      <div style={{
+        padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13,
+        borderRadius: 12, border: '1px solid var(--border-subtle)', marginTop: 16, background: 'rgba(251,191,36,.04)',
+      }}>
+        <Target size={28} style={{ opacity: 0.3, margin: '0 auto 12px', display: 'block', color: '#fbbf24' }} />
+        Aucun pattern dans l'intervalle choisi ({filterMin}% - {filterMax}%).
+      </div>
+    )
+  }
+
+  const visible = filtered.slice(0, visibleCount)
+  const hasMore = visibleCount < filtered.length
 
   return (
     <div style={{ marginTop: 16 }} className="animate-in">
@@ -112,7 +133,7 @@ const SimilarPatterns = memo(({ matches, onNavigate }) => {
         <Target size={16} style={{ color: 'var(--accent-indigo)' }} />
         Patterns similaires
         <span className="badge" style={{ background: 'var(--accent-indigo)', color: '#fff' }}>
-          {matches.length}
+          {filtered.length}{filtered.length !== matches.length ? ` / ${matches.length}` : ""}
         </span>
       </h3>
 

@@ -25,6 +25,9 @@ def init_db():
             stats_json  TEXT    NOT NULL,
             match_count INTEGER DEFAULT 0,
             pattern_type TEXT    DEFAULT 'normal',
+            alert_threshold REAL DEFAULT 55.0,
+            alert_type  TEXT    DEFAULT 'anomaly',
+            dataset     TEXT    DEFAULT '',
             created_at  REAL    NOT NULL
         )
     """)
@@ -43,15 +46,30 @@ def init_db():
         )
     """)
     conn.commit()
+    # Migration : ajouter colonnes si elles n'existent pas
+    try:
+        conn.execute("ALTER TABLE patterns ADD COLUMN alert_threshold REAL DEFAULT 55.0")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE patterns ADD COLUMN alert_type TEXT DEFAULT 'anomaly'")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE patterns ADD COLUMN dataset TEXT DEFAULT ''")
+    except Exception:
+        pass
     conn.close()
 
 
-def save_pattern(name, description, values, dates, stats, match_count, pattern_type="normal"):
+def save_pattern(name, description, values, dates, stats, match_count, pattern_type="normal",
+                  alert_threshold=55.0, alert_type="anomaly", dataset=""):
     conn = _get_conn()
     cur = conn.execute(
         """INSERT INTO patterns (name, description, values_json, dates_json,
-                                 stats_json, match_count, pattern_type, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                 stats_json, match_count, pattern_type, alert_threshold,
+                                 alert_type, dataset, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             name,
             description,
@@ -60,6 +78,9 @@ def save_pattern(name, description, values, dates, stats, match_count, pattern_t
             json.dumps(stats),
             match_count,
             pattern_type,
+            alert_threshold,
+            alert_type,
+            dataset or "",
             time.time(),
         ),
     )
@@ -69,12 +90,21 @@ def save_pattern(name, description, values, dates, stats, match_count, pattern_t
     return pid
 
 
-def list_patterns():
+def list_patterns(dataset=None):
     conn = _get_conn()
-    rows = conn.execute(
-        "SELECT id, name, description, stats_json, match_count, pattern_type, created_at "
-        "FROM patterns ORDER BY created_at DESC"
-    ).fetchall()
+    if dataset:
+        rows = conn.execute(
+            "SELECT id, name, description, stats_json, match_count, pattern_type, "
+            "alert_threshold, alert_type, dataset, created_at "
+            "FROM patterns WHERE dataset = ? ORDER BY created_at DESC",
+            (dataset,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, name, description, stats_json, match_count, pattern_type, "
+            "alert_threshold, alert_type, dataset, created_at "
+            "FROM patterns ORDER BY created_at DESC"
+        ).fetchall()
     conn.close()
     result = []
     for r in rows:
@@ -85,6 +115,9 @@ def list_patterns():
             "stats": json.loads(r["stats_json"]),
             "match_count": r["match_count"],
             "pattern_type": r["pattern_type"] or "normal",
+            "alert_threshold": r["alert_threshold"] if r["alert_threshold"] else 55.0,
+            "alert_type": r["alert_type"] or "anomaly",
+            "dataset": r["dataset"] or "",
             "created_at": r["created_at"],
         })
     return result
@@ -107,6 +140,9 @@ def get_pattern(pid):
         "stats": json.loads(row["stats_json"]),
         "pattern_type": row["pattern_type"] or "normal",
         "match_count": row["match_count"],
+        "alert_threshold": row["alert_threshold"] if row["alert_threshold"] else 55.0,
+        "alert_type": row["alert_type"] or "anomaly",
+        "dataset": row["dataset"] if "dataset" in row.keys() else "",
         "created_at": row["created_at"],
     }
 
@@ -117,6 +153,20 @@ def update_pattern_type(pid, pattern_type):
         pattern_type = "normal"
     conn = _get_conn()
     conn.execute("UPDATE patterns SET pattern_type = ? WHERE id = ?", (pattern_type, pid))
+    conn.commit()
+    conn.close()
+
+
+def update_pattern_threshold(pid, alert_threshold=None, alert_type=None):
+    """Mettre à jour le seuil et/ou le type d'alerte d'un pattern."""
+    conn = _get_conn()
+    if alert_threshold is not None and alert_type is not None:
+        conn.execute("UPDATE patterns SET alert_threshold = ?, alert_type = ? WHERE id = ?",
+                     (alert_threshold, alert_type, pid))
+    elif alert_threshold is not None:
+        conn.execute("UPDATE patterns SET alert_threshold = ? WHERE id = ?", (alert_threshold, pid))
+    elif alert_type is not None:
+        conn.execute("UPDATE patterns SET alert_type = ? WHERE id = ?", (alert_type, pid))
     conn.commit()
     conn.close()
 

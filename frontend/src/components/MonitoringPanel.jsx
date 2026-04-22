@@ -70,6 +70,9 @@ const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved, dataset 
   const [saveName, setSaveName] = useState("")
   const [saveDesc, setSaveDesc] = useState("")
   const [patternType, setPatternType] = useState("normal")
+  const [alertThreshold, setAlertThreshold] = useState(55.0)
+  // alertType est dérivé automatiquement du patternType
+  const alertType = patternType === "failure" ? "failure" : "anomaly"
   const [saveMsg, setSaveMsg] = useState(null)
   const [showSaveForm, setShowSaveForm] = useState(false)
 
@@ -81,19 +84,20 @@ const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved, dataset 
     setSaveMsg(null)
     try {
       const dist = monitoring?.distribution || null
-      const res = await savePattern(pi.start, pi.end, saveName.trim(), saveDesc.trim(), matchCount || 0, dist, patternType, dataset)
+      const res = await savePattern(pi.start, pi.end, saveName.trim(), saveDesc.trim(), matchCount || 0, dist, patternType, alertThreshold, alertType, dataset)
       if (res.error) { setSaveMsg({ type: "error", text: res.error }) }
       else {
         setSaveMsg({ type: "ok", text: res.message })
         setSaveName("")
         setSaveDesc("")
         setPatternType("normal")
+        setAlertThreshold(55.0)
         setShowSaveForm(false)
         if (onPatternSaved) onPatternSaved()
       }
     } catch { setSaveMsg({ type: "error", text: "Erreur réseau." }) }
     setSaving(false)
-  }, [saveName, saveDesc, patternType, monitoring, matchCount, onPatternSaved, dataset])
+  }, [saveName, saveDesc, patternType, alertThreshold, alertType, monitoring, matchCount, onPatternSaved, dataset])
 
   if (!monitoring) return null
   const { pattern_info: pi, search_info: si, distribution, score_stats: ss } = monitoring
@@ -163,6 +167,52 @@ const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved, dataset 
                 <AlertCircle size={14} style={{ color: 'var(--accent-rose)' }} />
                 <span style={{ fontSize: 13, fontWeight: 600 }}>Pattern de Panne</span>
               </label>
+            </div>
+
+            {/* Type d'alerte et seuil */}
+            <div style={{ 
+              display: 'flex', flexDirection: 'column', gap: 10, padding: '14px', 
+              background: 'var(--surface-overlay)', borderRadius: 8,
+              border: `1px solid ${alertType === "anomaly" ? "rgba(99,102,241,0.3)" : "rgba(239,68,68,0.3)"}`
+            }}>
+              {/* Badge type d'alerte auto-dérivé */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+                  background: alertType === "anomaly" ? "rgba(99,102,241,0.15)" : "rgba(239,68,68,0.15)",
+                  color: alertType === "anomaly" ? "var(--accent-indigo)" : "var(--accent-rose)",
+                  border: `1px solid ${alertType === "anomaly" ? "var(--accent-indigo)" : "var(--accent-rose)"}`,
+                }}>
+                  {alertType === "anomaly" ? "⚡ Alerte ANOMALIE" : "🔴 Alerte PANNE"}
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {alertType === "anomaly"
+                    ? `→ Alerte si similarité < ${alertThreshold.toFixed(0)}%`
+                    : `→ Alerte si similarité ≥ ${alertThreshold.toFixed(0)}%`}
+                </span>
+              </div>
+
+              {/* Slider seuil */}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span>Seuil de similarité</span>
+                  <span style={{ 
+                    fontWeight: 800, fontSize: 14,
+                    color: alertType === "anomaly" ? "var(--accent-indigo)" : "var(--accent-rose)"
+                  }}>
+                    {alertThreshold.toFixed(0)}%
+                  </span>
+                </label>
+                <input type="range" min="10" max="95" step="5" value={alertThreshold}
+                  onChange={e => setAlertThreshold(parseFloat(e.target.value))}
+                  style={{ width: '100%', accentColor: alertType === "anomaly" ? "#818cf8" : "#f87171" }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  <span>10% (relâché)</span>
+                  <span>50% (normal)</span>
+                  <span>95% (strict)</span>
+                </div>
+              </div>
             </div>
             
             <div style={{ display: 'flex', gap: 8 }}>

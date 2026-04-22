@@ -1,7 +1,7 @@
 # Pattern Recognition — Energy Analytics
 
 > Application web de détection de patterns dans des séries temporelles industrielles.  
-> Sélectionnez visuellement un profil sur un graphe interactif et retrouvez toutes ses occurrences similaires grâce à l'algorithme **MASS** (`stumpy`), avec un dashboard de monitoring complet et une bibliothèque de patterns sauvegardés.
+> Sélectionnez visuellement un profil sur un graphe interactif et retrouvez toutes ses occurrences similaires grâce à l'algorithme **MASS** (`stumpy`), avec un dashboard de monitoring complet, une bibliothèque de patterns sauvegardés et un **système d'alerte précoce (Early Warning System)** basé sur Sliding Window MASS + Machine à États.
 
 ---
 
@@ -13,11 +13,13 @@
 4. [Structure du projet](#structure-du-projet)
 5. [Architecture générale](#architecture-générale)
 6. [API REST](#api-rest)
-7. [Pipeline de traitement des données](#pipeline-de-traitement-des-données)
-8. [Algorithme MASS (stumpy)](#algorithme-mass-stumpy)
-9. [Base de données (SQLite)](#base-de-données-sqlite)
-10. [Datasets](#datasets)
-11. [Corrections et historique](#corrections-et-historique)
+7. [API REST — Temps Réel (Early Warning)](#api-rest--temps-réel-early-warning)
+8. [Pipeline de traitement des données](#pipeline-de-traitement-des-données)
+9. [Algorithme MASS (stumpy)](#algorithme-mass-stumpy)
+10. [Early Warning System — Architecture](#early-warning-system--architecture)
+11. [Base de données (SQLite)](#base-de-données-sqlite)
+12. [Datasets](#datasets)
+13. [Corrections et historique](#corrections-et-historique)
 
 ---
 
@@ -28,6 +30,7 @@
 | Backend | Python, FastAPI, uvicorn | Python 3.10+ |
 | Traitement données | pandas, numpy | |
 | Algorithme de recherche | **stumpy** (MASS — Mueen's Algorithm for Similarity Search) | |
+| Temps réel | Sliding Window MASS + Machine à États | stumpy, threading |
 | Base de données | SQLite (via `sqlite3`) | |
 | Frontend | React, react-plotly.js, axios, **lucide-react** | React 19.2, Plotly.js 3.4 |
 | Visualisation | Plotly.js `scattergl` (WebGL) | |
@@ -107,6 +110,8 @@ Pfe_Project/
 ├── README.md                          # Documentation développeur backend
 ├── FRONTEND_DEV.md                    # Documentation développeur frontend
 ├── GUIDE_UTILISATEUR.md               # Guide utilisateur final
+├── DESCRIPTION_LOGICIEL.md            # Description fonctionnelle du logiciel
+├── EARLY_WARNING_SYSTEM.md            # Documentation spécialisée Early Warning System
 ├── requirements.txt                   # Dépendances Python
 │
 ├── backend/
@@ -115,13 +120,15 @@ Pfe_Project/
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── data.py                    # GET /datasets + GET /data (pagination)
-│   │   └── pattern.py                 # POST /pattern, POST /scores, CRUD /patterns/*
+│   │   ├── pattern.py                 # POST /pattern, POST /scores, CRUD /patterns/*
+│   │   └── realtime.py                # POST /realtime/start, /stop, GET /status, /events
 │   │
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── data_loader.py            # Chargement CSV multi-datasets, cache mémoire
 │   │   ├── dtw_similarity.py         # Algorithme MASS (stumpy) + extraction non-chevauchante
-│   │   └── database.py               # CRUD SQLite pour la bibliothèque de patterns
+│   │   ├── database.py               # CRUD SQLite pour patterns et événements temps réel
+│   │   └── realtime_engine.py        # 🚨 Moteur EWS : Sliding Window MASS + State Machine
 │   │
 │   ├── datasets/
 │   │   ├── C2 elect kw.csv           # Consommation électrique (kW)
@@ -142,7 +149,7 @@ Pfe_Project/
         ├── index.css                  # Reset CSS, scrollbar
         │
         ├── api/
-        │   └── api.js                 # Client HTTP — tous les appels API
+        │   └── api.js                 # Client HTTP — tous les appels API (analyse + temps réel)
         │
         └── components/
             ├── DatasetSelector.jsx     # Sélection du dataset au démarrage
@@ -150,6 +157,7 @@ Pfe_Project/
             ├── FilterPanel.jsx         # Panneau de filtres (seuil, max, presets)
             ├── MonitoringPanel.jsx     # Dashboard monitoring post-détection
             ├── PatternLibrary.jsx      # Bibliothèque CRUD des patterns sauvegardés
+            ├── RealtimeMonitor.jsx     # 🚨 Dashboard Early Warning System temps réel
             ├── ScoreDistribution.jsx   # Histogramme des scores MASS
             └── SimilarPatterns.jsx     # Cartes cliquables des matches
 ```
@@ -175,11 +183,18 @@ Pfe_Project/
 │  │ FilterPanel  │  │ScoreDistrib.   │  │ PatternLibrary    │ │
 │  │ (Filtres)    │  │  (Histogram)   │  │ (CRUD patterns)   │ │
 │  └──────────────┘  └────────────────┘  └───────────────────┘ │
+│                                                               │
+│  ┌────────────────────────────────────────────────────────┐   │
+│  │              RealtimeMonitor (Early Warning)            │   │
+│  │  AlertBanner + TrackerCard×N + EventCard×N              │   │
+│  │  Jauge SVG · Timeline Plotly · Overlay Z-Norm           │   │
+│  └────────────────────────────────────────────────────────┘   │
 │                          │                                    │
 │  ┌────────────────────────────────────────────────────────┐   │
 │  │                   api.js (axios)                        │   │
 │  │  fetchDatasets() fetchData() detectPattern()            │   │
 │  │  computeAllScores() savePattern() listPatterns() ...    │   │
+│  │  startRealtime() stopRealtime() getRealtimeStatus()     │   │
 │  └────────────────────────┬───────────────────────────────┘   │
 └───────────────────────────┼───────────────────────────────────┘
                             │ HTTP REST
@@ -192,17 +207,30 @@ Pfe_Project/
 │  │(data.py)    │  │(pattern.py)    │  │DELETE /patterns/{id}  ││
 │  └──────┬──────┘  └───────┬────────┘  └──────────┬───────────┘│
 │         │                 │                       │            │
-│         ▼                 ▼                       ▼            │
+│  ┌──────┴─────────────────┴───────────────────────┘           │
+│  │                                                             │
+│  │  ┌──────────────────────────────────────────────────────┐  │
+│  │  │ POST /realtime/start · POST /realtime/stop           │  │
+│  │  │ GET  /realtime/status · GET /realtime/events         │  │
+│  │  │ DELETE /realtime/events · GET /realtime/config       │  │
+│  │  │ (realtime.py)                                        │  │
+│  │  └────────────────────────┬─────────────────────────────┘  │
+│  │                           │                                 │
+│  ▼                           ▼                                 │
 │  ┌──────────────────────────────┐  ┌──────────────────────┐   │
 │  │  data_loader.py              │  │  database.py         │   │
 │  │  Cache mémoire multi-dataset │  │  SQLite CRUD         │   │
-│  └──────────────────────────────┘  └──────────────────────┘   │
-│                  │                                             │
-│  ┌───────────────┴─────────────────────┐                      │
-│  │    dtw_similarity.py                 │                      │
-│  │    stumpy.mass() + extraction        │                      │
-│  │    non-chevauchante                  │                      │
-│  └──────────────────────────────────────┘                      │
+│  └──────────────────────────────┘  │  patterns +          │   │
+│                  │                  │  realtime_events     │   │
+│  ┌───────────────┴─────────────────┐└──────────────────────┘  │
+│  │    dtw_similarity.py            │                           │
+│  │    stumpy.mass() + extraction   │  ┌──────────────────────┐│
+│  │    non-chevauchante             │  │ realtime_engine.py   ││
+│  └─────────────────────────────────┘  │ PatternTracker ×N    ││
+│                                       │ State Machine        ││
+│                                       │ Sliding Window MASS  ││
+│                                       │ Circular Buffer      ││
+│                                       └──────────────────────┘│
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -218,6 +246,18 @@ Pfe_Project/
 8. **Navigation** : clic sur une carte ou boutons ◀/▶ pour zoomer sur un match
 9. **Sauvegarde** : `MonitoringPanel` → `savePattern()` → `POST /patterns/save` → SQLite
 10. **Bibliothèque** : `PatternLibrary` → `listPatterns()` / `getPattern()` / `deletePattern()`
+
+### Flux temps réel (Early Warning System)
+
+1. **Configuration** : l'utilisateur choisit vitesse et nombre de points
+2. **Démarrage** : `RealtimeMonitor` → `startRealtime(dataset, speed, startIndex, maxPoints)` → `POST /realtime/start`
+3. **Thread de simulation** : le backend lit le CSV point par point, remplit un buffer circulaire
+4. **Évaluation MASS** : toutes les 20 observations, `stumpy.mass()` compare le buffer à chaque pattern de référence
+5. **Machine à états** : chaque `PatternTracker` met à jour son état (IDLE→WATCHING→WARNING→ALERT→CONFIRMED)
+6. **Événements** : les transitions WARNING/ALERT/CONFIRMED sont sauvegardées en base SQLite
+7. **Polling** : le frontend poll `GET /realtime/status` toutes les 600ms
+8. **Affichage** : AlertBanner (global), TrackerCard (par pattern avec jauge + timeline + overlay), EventCard (transitions)
+9. **Arrêt** : `stopRealtime()` → `POST /realtime/stop`
 
 ---
 
@@ -412,6 +452,130 @@ Supprime un pattern de la bibliothèque.
 
 ---
 
+## API REST — Temps Réel (Early Warning)
+
+### `POST /realtime/start`
+
+Démarre la simulation temps réel en arrière-plan.
+
+**Corps de la requête :**
+```json
+{
+  "dataset": "C2 elect kw.csv",
+  "speed": 0.005,
+  "start_index": 0,
+  "max_points": 5000
+}
+```
+
+| Paramètre | Type | Défaut | Description |
+|---|---|---|---|
+| `dataset` | string | requis | Fichier CSV à simuler |
+| `speed` | float | 0.005 | Secondes entre chaque point |
+| `start_index` | int | 0 | Index de départ dans le CSV |
+| `max_points` | int | 0 | Nombre de points max (0 = tout) |
+
+**Réponse :**
+```json
+{ "message": "Simulation démarrée." }
+```
+
+---
+
+### `POST /realtime/stop`
+
+Arrête la simulation en cours.
+
+**Réponse :**
+```json
+{ "message": "Simulation arrêtée." }
+```
+
+---
+
+### `GET /realtime/status`
+
+Retourne l'état complet du moteur temps réel. Endpoint principal pour le polling frontend.
+
+**Réponse :**
+```json
+{
+  "running": true,
+  "total_points_received": 1234,
+  "buffer_size": 450,
+  "buffer_data": [2.9, 3.1, ...],
+  "trackers": [
+    {
+      "pattern_id": 1,
+      "name": "Cycle démarrage",
+      "pattern_type": "normal",
+      "level": "warning",
+      "similarity": 62.5,
+      "consecutive": 2,
+      "pattern_length": 200,
+      "history": [[1712345678.0, 45.2], [1712345680.0, 62.5]],
+      "pattern_data": [2.1, 3.4, ...],
+      "matched_segment": [2.3, 3.5, ...]
+    }
+  ],
+  "active_patterns_count": 3,
+  "events": [
+    {
+      "type": "state_change",
+      "pattern_name": "Cycle démarrage",
+      "pattern_type": "normal",
+      "from_level": "watching",
+      "to_level": "warning",
+      "similarity": 62.5,
+      "timestamp": 1712345680.0
+    }
+  ],
+  "dataset": "C2 elect kw.csv",
+  "speed": 0.005,
+  "simulation_progress": 24.7,
+  "global_alert_level": "warning",
+  "thresholds": {
+    "watch": 35.0,
+    "warning": 55.0,
+    "alert": 72.0,
+    "confirm": 85.0,
+    "drop": 25.0
+  }
+}
+```
+
+---
+
+### `GET /realtime/events`
+
+Retourne l'historique des événements enregistrés en base de données.
+
+**Paramètre query :** `limit` (int, défaut 100)
+
+---
+
+### `DELETE /realtime/events`
+
+Supprime tous les événements temps réel de la base de données.
+
+---
+
+### `GET /realtime/config`
+
+Retourne la configuration actuelle du moteur.
+
+**Réponse :**
+```json
+{
+  "levels": ["idle", "watching", "warning", "alert", "confirmed"],
+  "thresholds": { "watch": 35.0, "warning": 55.0, "alert": 72.0, "confirm": 85.0, "drop": 25.0 },
+  "speed": 0.005,
+  "active_patterns_count": 3
+}
+```
+
+---
+
 ## Pipeline de traitement des données
 
 ### 1. Chargement multi-dataset (`data_loader.py`)
@@ -490,6 +654,107 @@ Série complète (ex: 1,8M points)
 
 ---
 
+## Early Warning System — Architecture
+
+### Vue d'ensemble
+
+Le moteur d'alerte précoce (`realtime_engine.py`) implémente une architecture **Sliding Window MASS + Machine à États** pour la détection continue de patterns en temps réel.
+
+### Pipeline du moteur
+
+```
+CSV (simulation IoT)
+ │
+ ▼  point par point (speed configurable)
+Buffer circulaire (capacité = 1.5 × max_pattern_length)
+ │
+ ▼  toutes les EVAL_EVERY (20) observations
+┌──────────────────────────────────────────┐
+│ Pour chaque PatternTracker :             │
+│   stumpy.mass(pattern, buffer)           │
+│   → distance_profile                    │
+│   → best_idx = argmin(distance)         │
+│   → similarity = (1 - dist/max_dist)×100│
+│   → update state machine                │
+└──────────────────────────────────────────┘
+ │
+ ▼  si transition d'état
+Événement → _state["events"] + SQLite (si WARNING+)
+```
+
+### Machine à états
+
+Chaque pattern de référence possède un `PatternTracker` avec sa propre machine à états :
+
+```
+                  ≥35%          ≥55%           ≥72%          ≥85%
+                2 checks      3 checks       2 checks      2 checks
+  ┌──────┐    ┌──────────┐    ┌─────────┐    ┌───────┐    ┌───────────┐
+  │ IDLE │───→│ WATCHING │───→│ WARNING │───→│ ALERT │───→│ CONFIRMED │
+  └──────┘    └──────────┘    └─────────┘    └───────┘    └───────────┘
+     ▲                                                          │
+     │                    <25%, 3 checks                        │
+     └──────────────────────────────────────────────────────────┘
+```
+
+### Constantes de configuration
+
+| Constante | Valeur | Description |
+|---|---|---|
+| `EVAL_EVERY` | 20 | Évaluation toutes les N observations |
+| `SIMULATION_SPEED` | 0.005 | Secondes entre chaque point (par défaut) |
+| `THRESH_WATCH` | 35% | Seuil IDLE → WATCHING |
+| `THRESH_WARNING` | 55% | Seuil WATCHING → WARNING |
+| `THRESH_ALERT` | 72% | Seuil WARNING → ALERT |
+| `THRESH_CONFIRM` | 85% | Seuil ALERT → CONFIRMED |
+| `THRESH_DROP` | 25% | Seuil de retour → IDLE |
+| `CONSEC_WATCH` | 2 | Checks consécutifs pour WATCHING |
+| `CONSEC_WARNING` | 3 | Checks consécutifs pour WARNING |
+| `CONSEC_ALERT` | 2 | Checks consécutifs pour ALERT |
+| `CONSEC_CONFIRM` | 2 | Checks consécutifs pour CONFIRMED |
+| `CONSEC_DROP` | 3 | Checks consécutifs pour retour IDLE |
+
+### Classe `PatternTracker`
+
+```python
+class PatternTracker:
+    """Machine à états pour un pattern de référence donné."""
+
+    def __init__(self, pattern_id, name, pattern_type, values):
+        # Stocke le pattern + initialise l'état
+
+    def update(self, buffer):
+        # 1. MASS : distance_profile = stumpy.mass(pattern, buffer)
+        # 2. best_idx = argmin → similarity = (1 - dist/max_dist) × 100
+        # 3. State machine transitions (with consecutive checks)
+        # 4. Returns event dict if transition occurred
+
+    def get_matched_segment(self, buffer):
+        # Extrait le segment buffer[best_idx : best_idx + m]
+
+    def to_dict(self, buffer=None):
+        # Sérialise : level, similarity, history, pattern_data, matched_segment
+```
+
+### Conversion distance → similarité
+
+```python
+max_dist = sqrt(2 × len(pattern))
+similarity = max(0, min(100, (1 - distance / max_dist) × 100))
+```
+
+### Avantages de cette architecture
+
+| Ancienne approche (SPLITS) | Nouvelle approche (Sliding Window MASS) |
+|---|---|
+| Segments fixes = pas de tolérance au décalage temporel | Fenêtre glissante = détection à n'importe quelle position |
+| Détecte uniquement si les données commencent au même point | Trouve le meilleur alignement automatiquement |
+| Vérifie uniquement aux frontières de segments | Évaluation périodique continue |
+| Reset complet du buffer à chaque cycle | Buffer circulaire = maintien du contexte |
+| Pas d'hystérésis = faux positifs | Checks consécutifs requis = robustesse |
+
+---
+
 ## Base de données (SQLite)
 
 ### Schéma (`database.py`)
@@ -503,7 +768,21 @@ CREATE TABLE patterns (
     dates_json  TEXT    NOT NULL,        -- JSON array des dates ISO
     stats_json  TEXT    NOT NULL,        -- JSON objet (mean, std, distribution, etc.)
     match_count INTEGER DEFAULT 0,       -- Nombre d'occurrences trouvées
+    pattern_type TEXT   DEFAULT 'normal', -- 'normal' ou 'failure'
     created_at  REAL    NOT NULL         -- Timestamp Unix
+);
+
+CREATE TABLE realtime_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern_id      INTEGER,             -- Réf vers patterns.id
+    pattern_name    TEXT,
+    pattern_type    TEXT    DEFAULT 'normal',
+    split_index     INTEGER,             -- Index du niveau (0-4)
+    total_splits    INTEGER,             -- Nombre total de niveaux (4)
+    similarity      REAL,                -- Score de similarité (0-100%)
+    confidence      TEXT    DEFAULT 'low', -- Nom du niveau atteint
+    details_json    TEXT    DEFAULT '{}', -- JSON (from_level, to_level)
+    created_at      REAL    NOT NULL      -- Timestamp Unix
 );
 ```
 
@@ -559,8 +838,15 @@ Les fichiers CSV sont dans `backend/datasets/` :
 | MASS (stumpy) | Remplacement de DTW par MASS : ~50× plus rapide |
 | Pagination | Navigation par pages de 50 000 points |
 | Bibliothèque patterns | CRUD complet avec SQLite (save, list, get, delete) |
+| Classification patterns | Catégorisation Normal / Panne pour chaque pattern |
 | Filtrage côté client | Seuil de similarité + nombre max via FilterPanel |
 | Navigation matches | Boutons ◀/▶ + clic sur carte → zoom automatique |
 | Score distribution | Histogramme des scores MASS de toutes les sous-séquences |
 | Monitoring complet | Distribution, stats pattern, scores, pipeline |
+| **Early Warning System** | Sliding Window MASS + Machine à États (5 niveaux) |
+| **Suivi multi-patterns** | PatternTracker individuel par pattern de référence |
+| **Alerte progressive** | IDLE → WATCHING → WARNING → ALERT → CONFIRMED |
+| **Anti faux-positifs** | Checks consécutifs requis avant chaque transition |
+| **Traçabilité** | Événements temps réel sauvegardés en base SQLite |
+| **Visualisation EWS** | Jauge SVG, timeline Plotly, overlay Z-normalisé |
 | Dark theme premium | Design glassmorphism avec CSS variables et Lucide icons |

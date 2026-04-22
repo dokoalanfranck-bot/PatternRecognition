@@ -136,9 +136,12 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
   const [loading, setLoading] = useState(true)
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [editingType, setEditingType] = useState(false)
-  const [updatingType, setUpdatingType] = useState(false)
+  const [editingConfig, setEditingConfig] = useState(false)
+  const [updatingConfig, setUpdatingConfig] = useState(false)
   const [newType, setNewType] = useState(null)
+  const [newThreshold, setNewThreshold] = useState(55.0)
+  // alertType est auto-dérivé du newType
+  const newAlertType = newType === "failure" ? "failure" : "anomaly"
 
   useEffect(() => {
     let cancelled = false
@@ -147,6 +150,7 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
       if (!cancelled) { 
         setDetail(res)
         setNewType(res.pattern_type || "normal")
+        setNewThreshold(res.alert_threshold ?? 55.0)
         setLoading(false) 
       }
     }).catch(() => { if (!cancelled) setLoading(false) })
@@ -161,21 +165,22 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
     } catch { setDeleting(false) }
   }, [patternSummary.id, onDeleted])
 
-  const handleUpdateType = useCallback(async () => {
-    if (newType === detail.pattern_type) {
-      setEditingType(false)
-      return
-    }
-    setUpdatingType(true)
+  const handleUpdateConfig = useCallback(async () => {
+    setUpdatingConfig(true)
     try {
-      await updatePattern(patternSummary.id, { pattern_type: newType })
-      setDetail({ ...detail, pattern_type: newType })
-      setEditingType(false)
+      const alertType = newType === "failure" ? "failure" : "anomaly"
+      await updatePattern(patternSummary.id, { 
+        pattern_type: newType, 
+        alert_threshold: newThreshold,
+        alert_type: alertType
+      })
+      setDetail({ ...detail, pattern_type: newType, alert_threshold: newThreshold, alert_type: alertType })
+      setEditingConfig(false)
     } catch (e) {
       console.error(e)
     }
-    setUpdatingType(false)
-  }, [newType, detail, patternSummary.id])
+    setUpdatingConfig(false)
+  }, [newType, newThreshold, detail, patternSummary.id])
 
   const computed = useMemo(() => {
     if (!detail?.values?.length) return null
@@ -291,78 +296,157 @@ const PatternDetail = memo(({ patternSummary, onBack, onDeleted }) => {
         </div>
       </div>
 
-      {/* Classification Section */}
+      {/* Classification + Seuil EWS */}
       <div className="section" style={{ borderLeft: '3px solid var(--accent-indigo)', marginBottom: 16 }}>
         <h4 className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>Classification du pattern</span>
-          {!editingType && (
-            <button className="btn btn-ghost" onClick={() => setEditingType(true)} style={{ fontSize: 11, padding: '4px 8px' }}>
+          <span>Configuration EWS — Détection temps réel</span>
+          {!editingConfig && (
+            <button className="btn btn-ghost" onClick={() => setEditingConfig(true)} style={{ fontSize: 11, padding: '4px 8px' }}>
               Modifier
             </button>
           )}
         </h4>
         
-        {!editingType ? (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
-            background: detail.pattern_type === 'failure' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)',
-            borderRadius: 8, border: `1px solid ${detail.pattern_type === 'failure' ? 'var(--accent-rose)' : 'var(--accent-emerald)'}`
-          }}>
-            {detail.pattern_type === 'failure' ? (
-              <>
-                <AlertCircle size={20} style={{ color: 'var(--accent-rose)' }} />
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent-rose)' }}>Pattern de Panne</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Ce pattern représente un comportement d'anomalie ou de défaillance</div>
+        {!editingConfig ? (
+          /* Vue lecture seule */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {/* Type de pattern */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
+              background: detail.pattern_type === 'failure' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)',
+              borderRadius: 8, border: `1px solid ${detail.pattern_type === 'failure' ? 'var(--accent-rose)' : 'var(--accent-emerald)'}`
+            }}>
+              {detail.pattern_type === 'failure' ? (
+                <><AlertCircle size={20} style={{ color: 'var(--accent-rose)' }} />
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent-rose)' }}>Pattern de Panne</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Ce pattern représente un comportement de défaillance</div>
+                  </div></>
+              ) : (
+                <><TrendingUp size={20} style={{ color: 'var(--accent-emerald)' }} />
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent-emerald)' }}>Consommation Normale</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Ce pattern représente un fonctionnement normal du système</div>
+                  </div></>
+              )}
+            </div>
+            {/* Seuil EWS */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 16px', borderRadius: 8,
+              background: (detail.alert_type || "anomaly") === "anomaly" ? 'rgba(99,102,241,0.08)' : 'rgba(239,68,68,0.08)',
+              border: `1px solid ${(detail.alert_type || "anomaly") === "anomaly" ? 'rgba(99,102,241,0.25)' : 'rgba(239,68,68,0.25)'}`
+            }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{
+                    padding: '2px 8px', borderRadius: 12, fontSize: 11,
+                    background: (detail.alert_type || "anomaly") === "anomaly" ? 'rgba(99,102,241,0.2)' : 'rgba(239,68,68,0.2)',
+                    color: (detail.alert_type || "anomaly") === "anomaly" ? 'var(--accent-indigo)' : 'var(--accent-rose)',
+                    fontWeight: 700
+                  }}>
+                    {(detail.alert_type || "anomaly") === "anomaly" ? "⚡ ANOMALIE" : "🔴 PANNE"}
+                  </span>
                 </div>
-              </>
-            ) : (
-              <>
-                <TrendingUp size={20} style={{ color: 'var(--accent-emerald)' }} />
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent-emerald)' }}>Consommation Normale</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Ce pattern représente un fonctionnement normal du système</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  {(detail.alert_type || "anomaly") === "anomaly"
+                    ? `Alerte si similarité < ${(detail.alert_threshold ?? 55).toFixed(0)}% (déviation détectée)`
+                    : `Alerte si similarité ≥ ${(detail.alert_threshold ?? 55).toFixed(0)}% (panne reconnue)`}
                 </div>
-              </>
-            )}
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ 
+                  fontSize: 32, fontWeight: 900, lineHeight: 1,
+                  color: (detail.alert_type || "anomaly") === "anomaly" ? 'var(--accent-indigo)' : 'var(--accent-rose)'
+                }}>
+                  {(detail.alert_threshold ?? 55).toFixed(0)}%
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>seuil EWS</div>
+              </div>
+            </div>
           </div>
         ) : (
+          /* Formulaire d'édition */
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <label style={{
-              display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-              padding: '10px 12px', borderRadius: 6,
-              background: newType === "normal" ? "rgba(34, 197, 94, 0.15)" : "transparent",
-              border: newType === "normal" ? "1px solid var(--accent-emerald)" : "1px solid var(--border-subtle)",
-              transition: 'all 0.2s'
+            {/* Choix type */}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <label style={{
+                display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                flex: 1, padding: '10px 12px', borderRadius: 6,
+                background: newType === "normal" ? "rgba(34, 197, 94, 0.15)" : "transparent",
+                border: newType === "normal" ? "1px solid var(--accent-emerald)" : "1px solid var(--border-subtle)",
+                transition: 'all 0.2s'
+              }}>
+                <input type="radio" name="typeEdit" value="normal" checked={newType === "normal"}
+                  onChange={e => setNewType(e.target.value)} style={{ cursor: 'pointer' }} />
+                <TrendingUp size={14} style={{ color: 'var(--accent-emerald)' }} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>Consommation Normale</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>→ Alerte si déviation</div>
+                </div>
+              </label>
+              <label style={{
+                display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                flex: 1, padding: '10px 12px', borderRadius: 6,
+                background: newType === "failure" ? "rgba(239, 68, 68, 0.15)" : "transparent",
+                border: newType === "failure" ? "1px solid var(--accent-rose)" : "1px solid var(--border-subtle)",
+                transition: 'all 0.2s'
+              }}>
+                <input type="radio" name="typeEdit" value="failure" checked={newType === "failure"}
+                  onChange={e => setNewType(e.target.value)} style={{ cursor: 'pointer' }} />
+                <AlertCircle size={14} style={{ color: 'var(--accent-rose)' }} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>Pattern de Panne</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>→ Alerte si ressemblance</div>
+                </div>
+              </label>
+            </div>
+
+            {/* Slider seuil */}
+            <div style={{
+              padding: '14px 16px', borderRadius: 8,
+              background: newAlertType === "anomaly" ? 'rgba(99,102,241,0.08)' : 'rgba(239,68,68,0.08)',
+              border: `1px solid ${newAlertType === "anomaly" ? 'rgba(99,102,241,0.3)' : 'rgba(239,68,68,0.3)'}`
             }}>
-              <input type="radio" name="typeEdit" value="normal" checked={newType === "normal"}
-                onChange={e => setNewType(e.target.value)}
-                style={{ cursor: 'pointer' }} />
-              <TrendingUp size={14} style={{ color: 'var(--accent-emerald)' }} />
-              <span style={{ fontSize: 13, fontWeight: 600 }}>Consommation Normale</span>
-            </label>
-            
-            <label style={{
-              display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-              padding: '10px 12px', borderRadius: 6,
-              background: newType === "failure" ? "rgba(239, 68, 68, 0.15)" : "transparent",
-              border: newType === "failure" ? "1px solid var(--accent-rose)" : "1px solid var(--border-subtle)",
-              transition: 'all 0.2s'
-            }}>
-              <input type="radio" name="typeEdit" value="failure" checked={newType === "failure"}
-                onChange={e => setNewType(e.target.value)}
-                style={{ cursor: 'pointer' }} />
-              <AlertCircle size={14} style={{ color: 'var(--accent-rose)' }} />
-              <span style={{ fontSize: 13, fontWeight: 600 }}>Pattern de Panne</span>
-            </label>
-            
-            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-              <button className="btn btn-success" onClick={handleUpdateType} disabled={updatingType || newType === detail.pattern_type}>
-                {updatingType ? <Loader size={13} className="spinner" /> : "Enregistrer"}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div>
+                  <span style={{
+                    padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700,
+                    background: newAlertType === "anomaly" ? 'rgba(99,102,241,0.2)' : 'rgba(239,68,68,0.2)',
+                    color: newAlertType === "anomaly" ? 'var(--accent-indigo)' : 'var(--accent-rose)'
+                  }}>
+                    {newAlertType === "anomaly" ? "⚡ Alerte ANOMALIE" : "🔴 Alerte PANNE"}
+                  </span>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                    {newAlertType === "anomaly"
+                      ? `Alerte si similarité < ${newThreshold.toFixed(0)}%`
+                      : `Alerte si similarité ≥ ${newThreshold.toFixed(0)}%`}
+                  </div>
+                </div>
+                <span style={{ 
+                  fontSize: 36, fontWeight: 900, lineHeight: 1,
+                  color: newAlertType === "anomaly" ? 'var(--accent-indigo)' : 'var(--accent-rose)'
+                }}>
+                  {newThreshold.toFixed(0)}%
+                </span>
+              </div>
+              <input type="range" min="10" max="95" step="5" value={newThreshold}
+                onChange={e => setNewThreshold(parseFloat(e.target.value))}
+                style={{ width: '100%', accentColor: newAlertType === "anomaly" ? "#818cf8" : "#f87171" }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                <span>10% (relâché)</span><span>50% (normal)</span><span>95% (strict)</span>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-success" onClick={handleUpdateConfig} disabled={updatingConfig}>
+                {updatingConfig ? <Loader size={13} className="spinner" /> : "✓ Enregistrer"}
               </button>
-              <button className="btn" onClick={() => { setEditingType(false); setNewType(detail.pattern_type) }}>
-                Annuler
-              </button>
+              <button className="btn" onClick={() => { 
+                setEditingConfig(false)
+                setNewType(detail.pattern_type)
+                setNewThreshold(detail.alert_threshold ?? 55.0)
+              }}>Annuler</button>
             </div>
           </div>
         )}
@@ -457,7 +541,7 @@ const PatternCard = memo(({ pattern, onClick }) => {
   )
 })
 
-const PatternLibrary = memo(({ refreshKey }) => {
+const PatternLibrary = memo(({ refreshKey, dataset }) => {
   const [patterns, setPatterns] = useState([])
   const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState(null)
@@ -465,7 +549,7 @@ const PatternLibrary = memo(({ refreshKey }) => {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await listPatterns()
+      const res = await listPatterns(dataset)
       const list = res.patterns || []
       const withPreviews = await Promise.all(
         list.map(async (p) => {
@@ -478,7 +562,7 @@ const PatternLibrary = memo(({ refreshKey }) => {
       setPatterns(withPreviews)
     } catch { setPatterns([]) }
     setLoading(false)
-  }, [])
+  }, [dataset])
 
   useEffect(() => { load() }, [load, refreshKey])
 

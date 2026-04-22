@@ -4,13 +4,19 @@ from pathlib import Path
 
 _cache = {}
 
+
+def clear_cache():
+    """Vide le cache pour forcer un rechargement des datasets."""
+    global _cache
+    _cache = {}
+
 DATASETS_DIR = Path(__file__).parent.parent / "datasets"
 
 # Chemin par défaut (rétrocompatibilité)
 CSV_PATH = DATASETS_DIR / "C2 elect kw.csv"
 
 # Paramètres de détection d'anomalies
-OUTLIER_IQR_FACTOR = 1.5  # Facteur pour l'IQR (Interquartile Range)
+OUTLIER_IQR_FACTOR = 3.0  # Facteur IQR — 1.5 est trop agressif sur des données industrielles
 
 
 def list_datasets():
@@ -71,26 +77,27 @@ def load_dataset(filename=None):
 
     data = data.set_index("date")
 
-    # Détection des points extrêmes anormaux avec IQR
+    # Détection des outliers extrêmes (erreurs capteurs / pics anormaux)
     Q1 = data["value"].quantile(0.25)
     Q3 = data["value"].quantile(0.75)
     IQR = Q3 - Q1
-    
-    # Limites pour les outliers
-    lower_bound = Q1 - OUTLIER_IQR_FACTOR * IQR
+
+    # Bornes asymétriques : on tolère plus les basses valeurs (arrêt machine légitime)
+    lower_bound = max(0.0, Q1 - OUTLIER_IQR_FACTOR * IQR)
     upper_bound = Q3 + OUTLIER_IQR_FACTOR * IQR
-    
-    # Détecter les outliers
+
     is_outlier = (data["value"] < lower_bound) | (data["value"] > upper_bound)
-    
-    # Corriger les outliers en les remplaçant par la moyenne mobile locale
+
     if is_outlier.any():
-        moving_avg = data["value"].rolling(
-            window=10,
-            center=True,
-            min_periods=1
-        ).mean()
-        data.loc[is_outlier, "value"] = moving_avg[is_outlier]
+        # Mettre les outliers à NaN puis interpoler linéairement entre les bons voisins
+        # (beaucoup plus propre que la moyenne mobile qui est elle-même polluée par les spikes)
+        data.loc[is_outlier, "value"] = np.nan
+        data["value"] = data["value"].interpolate(method="linear", limit_direction="both")
+        # Fallback pour les bords éventuels encore NaN
+        if data["value"].isna().any():
+            data["value"] = data["value"].fillna(
+                data["value"].rolling(window=30, center=True, min_periods=1).median()
+            )
 
     _cache[cache_key] = data
     return _cache[cache_key]

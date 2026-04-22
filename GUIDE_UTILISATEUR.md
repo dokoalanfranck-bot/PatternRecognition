@@ -11,9 +11,10 @@ Bienvenue ! Ce guide vous explique comment utiliser l'application **pas à pas**
 3. [Écran d'accueil — Choix du jeu de données](#écran-daccueil--choix-du-jeu-de-données)
 4. [Onglet Analyse](#onglet-analyse)
 5. [Onglet Bibliothèque](#onglet-bibliothèque)
-6. [Conseils d'utilisation](#conseils-dutilisation)
-7. [Dépannage](#dépannage)
-8. [Questions fréquentes](#questions-fréquentes)
+6. [Onglet Temps Réel — Early Warning System](#onglet-temps-réel--early-warning-system)
+7. [Conseils d'utilisation](#conseils-dutilisation)
+8. [Dépannage](#dépannage)
+9. [Questions fréquentes](#questions-fréquentes)
 
 ---
 
@@ -26,8 +27,9 @@ L'application vous permet de chercher des **formes récurrentes** (appelées *pa
 ✅ **Sélectionner** une portion de courbe qui vous intéresse  
 ✅ **Détecter** automatiquement toutes les portions similaires dans l'historique  
 ✅ **Filtrer** les résultats par niveau de similarité  
-✅ **Sauvegarder** les meilleurs patterns dans une bibliothèque personnelle  
+✅ **Sauvegarder** les meilleurs patterns dans une bibliothèque personnelle (Normal ou Panne)  
 ✅ **Consulter** et gérer vos patterns sauvegardés  
+✅ **Surveiller en temps réel** vos données avec le système d'alerte précoce (Early Warning)  
 
 ---
 
@@ -252,6 +254,90 @@ En cliquant sur un pattern, vous accédez à sa fiche complète :
 
 ---
 
+## Onglet Temps Réel — Early Warning System
+
+Cliquez sur l'onglet **Temps Réel** en haut pour accéder au système d'alerte précoce. Ce module surveille un flux de données en continu et compare chaque nouvelle observation aux patterns de votre bibliothèque.
+
+> **Prérequis** : vous devez avoir au moins un pattern sauvegardé dans la Bibliothèque (minimum 40 points). Les patterns servent de référence pour la détection.
+
+### 1️⃣ Configurer et lancer
+
+Avant le lancement, vous pouvez régler :
+- **Vitesse (s/pt)** : délai entre chaque point simulé (0.005 = très rapide, 0.1 = lent)
+- **Nb points max** : nombre de points à traiter (0 = tout le jeu de données)
+
+Cliquez sur **"Lancer"** pour démarrer la simulation.
+
+### 2️⃣ Barre de progression
+
+Pendant la simulation, une barre de progression indique :
+- Le **pourcentage** de données traitées
+- **Points reçus** : nombre de points injectés dans le buffer
+- **Buffer** : taille actuelle du buffer circulaire
+- **Patterns** : nombre de patterns de référence surveillés
+
+Cliquez **"Stop"** pour arrêter la simulation à tout moment.
+
+### 3️⃣ Bandeau d'alerte globale
+
+Un bandeau en haut du panneau affiche le **niveau d'alerte maximal** parmi tous les patterns surveillés :
+
+| Niveau | Couleur | Signification |
+|---|---|---|
+| **Idle** | Gris | Aucune activité détectée |
+| **Watching** | Bleu | Ressemblance faible détectée, surveillance active |
+| **Warning** | Jaune/Ambre | Ressemblance modérée, attention requise |
+| **Alert** | Orange | Ressemblance forte, intervention probable |
+| **Confirmed** | Rouge | Correspondance confirmée, action requise |
+
+Un pipeline de **5 points connectés** montre la progression visuelle à travers les niveaux.
+
+### 4️⃣ Cartes de suivi par pattern (Tracker Cards)
+
+Chaque pattern de référence possède sa propre carte avec :
+
+**En-tête :**
+- Nom du pattern et type (**✓ Normal** en vert ou **⚠ Panne** en rouge)
+- Nombre de points du pattern
+- **Jauge circulaire SVG** : pourcentage de similarité en temps réel (coloré selon le niveau)
+- **Badge de niveau** : état actuel de la machine à états
+
+**Graphiques :**
+- **Évolution Similarité** (gauche) : timeline montrant l'historique de similarité avec les lignes de seuils en pointillés
+- **Superposition Z-Norm** (droite) : overlay du pattern de référence (violet) et du segment correspondant du flux (couleur dynamique) après normalisation, permettant de comparer les formes
+
+### 5️⃣ Journal des événements
+
+En bas, le journal affiche toutes les **transitions d'états** :
+- Chaque événement montre : `ancien_niveau → nouveau_niveau`, nom du pattern, similarité %
+- Les événements sont colorés selon la gravité (escalade = couleur du nouveau niveau)
+- Les patterns de type "Panne" sont marqués **⚠ PANNE** en rouge
+- Cliquez **"Effacer"** pour vider l'historique (disponible quand la simulation est arrêtée)
+
+### 6️⃣ Comprendre la machine à états
+
+Le système utilise une **machine à états progressive** pour éviter les faux positifs :
+
+```
+IDLE ──(≥35%, 2 checks)──→ WATCHING ──(≥55%, 3 checks)──→ WARNING
+                                                              │
+              CONFIRMED ←──(≥85%, 2 checks)── ALERT ←──(≥72%, 2 checks)──┘
+```
+
+- Chaque transition nécessite un **nombre de checks consécutifs** au-dessus du seuil
+- Le retour à IDLE nécessite **3 checks consécutifs** sous 25% de similarité
+- Les évaluations se font **toutes les 20 observations** (pas à chaque point)
+- Le buffer est **circulaire** : il garde les 1.5× derniers points du plus grand pattern
+
+### 7️⃣ Conseils pour le temps réel
+
+1. **Sauvegardez des patterns de qualité** : plus le pattern de référence est propre, meilleure sera la détection
+2. **Patterns de panne** : sauvegardez les signatures précédant les pannes connues pour que le système les détecte prématurément
+3. **Vitesse** : commencez avec 0.005 pour tester rapidement, puis 0.05-0.1 pour observer les transitions en temps réel
+4. **Interprétation** : un niveau WARNING sur un pattern "Panne" est plus préoccupant qu'un WARNING sur un pattern "Normal"
+
+---
+
 ## Conseils d'utilisation
 
 ### Comment sélectionner un bon pattern ?
@@ -296,6 +382,9 @@ En cliquant sur un pattern, vous accédez à sa fiche complète :
 | **La bibliothèque ne se met pas à jour** | Cliquez le bouton "Rafraîchir" en haut de la liste. |
 | **L'application ne s'ouvre pas** | Vérifiez que le backend tourne (terminal 1) et le frontend aussi (terminal 2). |
 | **Beaucoup de résultats "Faible"** | Le pattern est trop générique. Essayez de sélectionner une zone plus spécifique. |
+| **Temps réel : "Aucun pattern en base"** | Sauvegardez au moins un pattern dans la Bibliothèque (min. 40 points) avant de lancer le temps réel. |
+| **Temps réel : aucune transition** | Le jeu de données ne contient peut-être pas de segments similaires. Essayez un pattern plus court ou un dataset différent. |
+| **Temps réel : reste bloqué sur IDLE** | Les seuils sont élevés par défaut. Vérifiez que vos patterns de référence correspondent bien aux données du flux simulé. |
 
 ---
 
@@ -318,6 +407,15 @@ R : La bibliothèque est globale. Vous pouvez sauvegarder des patterns de n'impo
 
 **Q : Que signifie le "score MASS" ?**  
 R : C'est la distance brute calculée par l'algorithme. Plus le score est **bas**, plus la similarité est **haute**. Le pourcentage affiché est la conversion inverse pour que ce soit plus intuitif.
+
+**Q : Comment fonctionne le système d'alerte temps réel ?**  
+R : Le système lit les données point par point (comme un capteur IoT), accumule un buffer glissant, et toutes les 20 observations compare le buffer à chaque pattern de référence grâce à l'algorithme MASS. Si la similarité dépasse un seuil pendant plusieurs évaluations consécutives, le niveau d'alerte augmente progressivement.
+
+**Q : Quelle est la différence entre un pattern Normal et Panne ?**  
+R : C'est une classification que vous attribuez lors de la sauvegarde. Un pattern "Panne" correspond à un profil de données précédant une défaillance connue. Le système d'alerte précoce l'utilise pour vous avertir quand un comportement similaire réapparait.
+
+**Q : Pourquoi le niveau passe-t-il de WARNING à IDLE directement ?**  
+R : Si la similarité chute sous 25% pendant 3 évaluations consécutives, le système revient directement à IDLE. C'est un mécanisme de protection contre les alertes persistantes injustifiées.
 
 ---
 

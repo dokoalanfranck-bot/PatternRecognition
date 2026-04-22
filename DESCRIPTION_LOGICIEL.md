@@ -2,9 +2,9 @@
 
 ## Vue d'ensemble
 
-**Pattern Recognition Energy Analytics** est une application web de détection et d'analyse de patterns (formes récurrentes) dans des **séries temporelles industrielles**. Elle permet d'identifier automatiquement toutes les occurrences similaires à un motif sélectionné dans un historique de données, grâce à l'algorithme **MASS** (Mueen's Algorithm for Similarity Search).
+**Pattern Recognition Energy Analytics** est une application web de détection, d'analyse et de **surveillance en temps réel** de patterns (formes récurrentes) dans des **séries temporelles industrielles**. Elle permet d'identifier automatiquement toutes les occurrences similaires à un motif sélectionné dans un historique de données, grâce à l'algorithme **MASS** (Mueen's Algorithm for Similarity Search), et dispose d'un **système d'alerte précoce (Early Warning System)** basé sur une machine à états pour le monitoring continu.
 
-L'interface dark moderne et performante offre une visualisation interactive haute résolution et une bibliothèque personnelle pour sauvegarder les patterns pertinents.
+L'interface dark moderne et performante offre une visualisation interactive haute résolution, une bibliothèque personnelle pour sauvegarder les patterns pertinents, et un tableau de bord temps réel pour la surveillance industrielle.
 
 ---
 
@@ -28,20 +28,30 @@ L'interface dark moderne et performante offre une visualisation interactive haut
 ### 3. **Détection de patterns**
 - **Sélection visuelle** : cliquez et glissez pour choisir un motif sur le graphe
 - **Recherche automatique** : l'algorithme MASS détecte toutes les portions similaires
-- **Score de similarité** : chaque match reçoit un score (0 à 1)
+- **Score de similarité** : chaque match reçoit un score (0 à 100%)
 - **Filtrage** : ajustez le seuil de similarité pour affiner les résultats
+- **Classification** : catégorisation des patterns en **Normal** ou **Panne**
 
 ### 4. **Dashboard de monitoring**
 - Statistiques en temps réel sur les patterns trouvés
 - Distribution des scores de similarité
-- Heatmap ou corrélations entre patterns
-- Exportation des résultats
+- Informations détaillées du pattern (durée, stats, énergie)
+- Pipeline de recherche (taille série, positions scannées, temps)
 
 ### 5. **Bibliothèque de patterns**
-- Sauvegarde des patterns intéressants
+- Sauvegarde des patterns intéressants avec classification (Normal / Panne)
 - Stockage local persistent (SQLite)
 - Consultation et gestion des patterns mémorisés
 - Suppression et organisation
+
+### 6. **🚨 Système d'alerte précoce (Early Warning System)**
+- **Monitoring temps réel** : simulation point par point d'un flux IoT
+- **Sliding Window MASS** : comparaison continue du flux contre les patterns de référence
+- **Machine à états à 5 niveaux** : IDLE → WATCHING → WARNING → ALERT → CONFIRMED
+- **Suivi multi-patterns** : chaque pattern possède sa propre machine à états
+- **Alerte progressive** : transitions nécessitant des checks consécutifs (anti faux-positifs)
+- **Visualisation avancée** : jauge SVG, timeline de similarité, superposition Z-normalisée
+- **Événements traçables** : historique complet des transitions d'états en base de données
 
 ---
 
@@ -53,12 +63,13 @@ L'interface dark moderne et performante offre une visualisation interactive haut
 |--------|------------|---------|
 | **Backend** | Python 3.10+ | FastAPI + uvicorn |
 | **Algorithme** | stumpy (MASS) | Recherche de séquences similaires |
-| **Base de données** | SQLite | Stockage patterns et metadata |
+| **Temps réel** | Sliding Window MASS | Détection continue + machine à états |
+| **Base de données** | SQLite | Stockage patterns, événements, metadata |
 | **Frontend** | React 19.2 | Interface utilisateur |
 | **Visualisation** | Plotly.js 3.4 | Graphiques interactifs WebGL |
 | **Design** | CSS moderne | Dark theme, glassmorphism, variables CSS |
 
-### Flux de données
+### Flux de données — Analyse
 
 ```
 Données CSV → Backend (pandas) → Preprocessing → MASS Algorithm
@@ -68,6 +79,23 @@ Données CSV → Backend (pandas) → Preprocessing → MASS Algorithm
            Frontend (React) → Visualisation Plotly
                 ↓
            Bibliothèque (SQLite) ← Patterns sauvegardés
+```
+
+### Flux de données — Early Warning System
+
+```
+Données CSV (simulation IoT)
+    ↓  point par point
+Buffer circulaire (1.5× max pattern)
+    ↓  toutes les 20 observations
+MASS (stumpy) — best match par pattern de référence
+    ↓  distance → similarité %
+Machine à états (par pattern)
+    IDLE → WATCHING → WARNING → ALERT → CONFIRMED
+    ↓  transitions
+Événements → SQLite (traçabilité)
+    ↓
+Frontend → Jauge SVG + Timeline + Overlay Z-Norm
 ```
 
 ---
@@ -143,10 +171,13 @@ Données CSV → Backend (pandas) → Preprocessing → MASS Algorithm
 ## 📈 Avantages de cet outil
 
 ✅ **Détection automatique** — plus rapide et fiable que l'analyse manuelle  
+✅ **Early Warning System** — alerte progressive avant les pannes  
+✅ **Machine à états** — anti faux-positifs avec checks consécutifs  
 ✅ **Interface intuitive** — pas besoin de connaissances techniques  
 ✅ **Performance** — traite des millions de points en temps réel (WebGL)  
 ✅ **Flexibilité** — paramétrable pour différents seuils/domaines  
 ✅ **Historique** — bibliothèque pour comparer patterns passés  
+✅ **Traçabilité** — tous les événements d'alerte enregistrés en base  
 ✅ **Open-source** — basé sur stack moderne (React, FastAPI, stumpy)  
 ✅ **Scalable** — architecture backend/frontend facilement extensible  
 
@@ -163,8 +194,14 @@ Un opérateur détecte une consommation vapeur anormale, la compare à l'histori
 ### Exemple 3 : Optimisation temps cycles
 L'équipe QA utilise les patterns pour identifier les cycles les plus rapides (best performance), et documente les conditions qui y ont mené.
 
+### Exemple 4 : Early Warning — Détection de panne imminente
+Un technicien sauvegarde un pattern de type "Panne" dans la bibliothèque (signature énergétique précédant une défaillance connue). Le système d'alerte précoce surveille le flux en continu : dès que la machine à états passe en WARNING, l'opérateur est prévenu et peut intervenir avant la casse.
+
+### Exemple 5 : Surveillance multi-patterns
+Le responsable maintenance configure 5 patterns de référence (3 normaux, 2 pannes). Le dashboard affiche en temps réel l'état de chaque tracker avec sa jauge de similarité, permettant de détecter simultanément un cycle normal qui dévie ET une signature de panne qui émerge.
+
 ---
 
 ## 📝 Conclusion
 
-Cette application transforme des données brutes en **intelligence exploitable**, permettant aux organisations d'optimiser leurs opérations, réduire les coûts énergétiques, améliorer la fiabilité et prévenir les défaillances. Elle s'adresse à tous les secteurs avec des données temporelles critiques à analyser.
+Cette application transforme des données brutes en **intelligence exploitable**, permettant aux organisations d'optimiser leurs opérations, réduire les coûts énergétiques, améliorer la fiabilité et prévenir les défaillances. Le **système d'alerte précoce** apporte une dimension proactive en détectant les situations à risque avant qu'elles ne deviennent critiques, grâce à une machine à états robuste et un algorithme de recherche de similarité performant. Elle s'adresse à tous les secteurs avec des données temporelles critiques à analyser et à surveiller.
