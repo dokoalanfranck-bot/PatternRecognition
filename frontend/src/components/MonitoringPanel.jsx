@@ -1,7 +1,7 @@
-import React, { memo, useState, useCallback } from "react"
+import React, { memo, useState, useCallback, useMemo } from "react"
 import { savePattern } from "../api/api"
 import {
-  Activity, Clock, Hash, TrendingUp, TrendingDown, Minus,
+  Activity, Clock, Hash, TrendingUp, TrendingDown,
   Award, Target, BarChart3, Save, X, Check, AlertCircle, Zap, Sigma
 } from "lucide-react"
 
@@ -29,44 +29,191 @@ const StatCard = memo(({ title, value, unit, colorClass, icon: Icon }) => (
   </div>
 ))
 
-const DistributionBar = memo(({ distribution }) => {
-  const total = distribution.excellent.count + distribution.good.count + distribution.low.count
-  if (total === 0) return null
-  const segs = [
-    { ...distribution.excellent, key: "excellent", bg: "var(--accent-emerald)" },
-    { ...distribution.good, key: "good", bg: "var(--accent-blue)" },
-    { ...distribution.low, key: "low", bg: "var(--accent-amber)" },
-  ]
+const BUCKET_COLOR = (min) => {
+  if (min >= 80) return "#34d399"
+  if (min >= 50) return "#60a5fa"
+  if (min >= 30) return "#fbbf24"
+  return "#f87171"
+}
+
+const SimilarityDistribution = memo(({ matches, threshold, onThresholdChange }) => {
+  const buckets = useMemo(() => {
+    const b = Array.from({ length: 10 }, (_, i) => ({ min: i * 10, max: (i + 1) * 10, count: 0 }))
+    matches.forEach(m => {
+      const sim = m.similarity ?? 0
+      const idx = Math.min(9, Math.floor(sim / 10))
+      b[idx].count++
+    })
+    return b
+  }, [matches])
+
+  const maxCount = useMemo(() => Math.max(...buckets.map(b => b.count), 1), [buckets])
+  const above = useMemo(() => matches.filter(m => (m.similarity ?? 0) >= threshold).length, [matches, threshold])
+  const below = matches.length - above
+
   return (
     <div>
-      <div className="distribution-bar" style={{ marginBottom: 10 }}>
-        {segs.map(s => {
-          const pct = (s.count / total) * 100
-          if (pct === 0) return null
+      {/* Mini histogramme */}
+      <div style={{ position: 'relative', height: 72, display: 'flex', alignItems: 'flex-end', gap: 3, marginBottom: 6 }}>
+        {buckets.map(b => {
+          const h = (b.count / maxCount) * 64
+          const midpoint = b.min + 5
+          const active = midpoint >= threshold
+          const color = BUCKET_COLOR(b.min)
           return (
-            <div key={s.key} style={{
-              width: `${pct}%`, background: s.bg,
-              minWidth: s.count > 0 ? 32 : 0
-            }}>
-              {s.count}
+            <div key={b.min} title={`${b.min}–${b.max}% : ${b.count} matches`}
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+              <div style={{
+                width: '100%',
+                height: Math.max(h, b.count > 0 ? 4 : 0),
+                background: active ? color : `${color}28`,
+                borderRadius: '3px 3px 0 0',
+                transition: 'all 0.2s ease',
+                boxShadow: active && b.count > 0 ? `0 0 8px ${color}55` : 'none',
+              }} />
             </div>
           )
         })}
+        {/* Ligne de seuil verticale */}
+        <div style={{
+          position: 'absolute',
+          left: `${threshold}%`,
+          top: 0, bottom: 0,
+          width: 2,
+          background: 'linear-gradient(180deg, #f59e0b, rgba(245,158,11,0.4))',
+          boxShadow: '0 0 10px rgba(245,158,11,0.7)',
+          borderRadius: 2,
+          pointerEvents: 'none',
+          transition: 'left 0.08s',
+          zIndex: 2,
+        }} />
       </div>
-      <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--text-muted)' }}>
-        {segs.map(s => (
-          <span key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.bg, display: 'inline-block' }} />
-            {s.label} : {s.count}
+
+      {/* Axe X */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginBottom: 14 }}>
+        {['0%', '25%', '50%', '75%', '100%'].map(l => <span key={l}>{l}</span>)}
+      </div>
+
+      {/* Barre de seuil glissante */}
+      <div style={{ position: 'relative', marginBottom: 20, userSelect: 'none' }}>
+        {/* Track gradient */}
+        <div style={{
+          height: 8, borderRadius: 4,
+          background: 'linear-gradient(90deg, #f87171 0%, #fbbf24 30%, #60a5fa 50%, #34d399 80%)',
+          position: 'relative',
+        }}>
+          {/* Overlay foncé sur la partie "hors seuil" */}
+          <div style={{
+            position: 'absolute', left: 0, top: 0, bottom: 0,
+            width: `${threshold}%`,
+            background: 'rgba(5,10,24,0.62)',
+            borderRadius: '4px 0 0 4px',
+            transition: 'width 0.08s',
+          }} />
+        </div>
+
+        {/* Input range invisible dessus */}
+        <input
+          type="range" min={0} max={100} step={1} value={threshold}
+          onChange={e => onThresholdChange(Number(e.target.value))}
+          style={{
+            position: 'absolute', inset: 0,
+            width: '100%', height: '100%',
+            opacity: 0, cursor: 'pointer', margin: 0,
+          }}
+        />
+
+        {/* Thumb visuel */}
+        <div style={{
+          position: 'absolute',
+          top: '50%', left: `${threshold}%`,
+          transform: 'translate(-50%, -50%)',
+          width: 22, height: 22,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle at 35% 35%, #fde68a, #f59e0b)',
+          border: '3px solid rgba(255,255,255,0.85)',
+          boxShadow: '0 2px 12px rgba(245,158,11,0.6), 0 0 0 4px rgba(245,158,11,0.12)',
+          pointerEvents: 'none',
+          transition: 'left 0.08s',
+          zIndex: 3,
+        }} />
+
+        {/* Tooltip seuil */}
+        <div style={{
+          position: 'absolute',
+          top: -26, left: `${threshold}%`,
+          transform: 'translateX(-50%)',
+          background: '#f59e0b',
+          color: '#000',
+          fontSize: 11, fontWeight: 800,
+          padding: '2px 7px', borderRadius: 5,
+          whiteSpace: 'nowrap',
+          boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
+          pointerEvents: 'none',
+          transition: 'left 0.08s',
+          zIndex: 3,
+        }}>
+          {threshold}%
+          <div style={{
+            position: 'absolute', bottom: -5, left: '50%', transform: 'translateX(-50%)',
+            width: 0, height: 0,
+            borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
+            borderTop: '5px solid #f59e0b',
+          }} />
+        </div>
+      </div>
+
+      {/* Cartes résumé */}
+      <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{
+          flex: 1, borderRadius: 10,
+          padding: '10px 14px',
+          background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(99,102,241,0.06))',
+          border: '1px solid rgba(99,102,241,0.25)',
+          display: 'flex', flexDirection: 'column', gap: 4,
+        }}>
+          <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+            ≥ {threshold}% · dans le seuil
           </span>
-        ))}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+            <span style={{ fontSize: 28, fontWeight: 900, color: '#818cf8', lineHeight: 1 }}>{above}</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>matches</span>
+            {matches.length > 0 && (
+              <span style={{ fontSize: 12, color: '#818cf8', fontWeight: 700, marginLeft: 'auto' }}>
+                {((above / matches.length) * 100).toFixed(0)}%
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div style={{
+          flex: 1, borderRadius: 10,
+          padding: '10px 14px',
+          background: 'rgba(15,23,42,0.45)',
+          border: '1px solid rgba(148,163,184,0.12)',
+          display: 'flex', flexDirection: 'column', gap: 4,
+        }}>
+          <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+            &lt; {threshold}% · hors seuil
+          </span>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+            <span style={{ fontSize: 28, fontWeight: 900, color: 'var(--text-secondary)', lineHeight: 1 }}>{below}</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>matches</span>
+            {matches.length > 0 && (
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 700, marginLeft: 'auto' }}>
+                {((below / matches.length) * 100).toFixed(0)}%
+              </span>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )
 })
 
-const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved, dataset }) => {
+const MonitoringPanel = memo(({ monitoring, matchCount, matches = [], onPatternSaved, dataset }) => {
   const [saving, setSaving] = useState(false)
+  const [distThreshold, setDistThreshold] = useState(50)
   const [saveName, setSaveName] = useState("")
   const [saveDesc, setSaveDesc] = useState("")
   const [patternType, setPatternType] = useState("normal")
@@ -237,15 +384,20 @@ const MonitoringPanel = memo(({ monitoring, matchCount, onPatternSaved, dataset 
       )}
 
       {/* Distribution */}
-      <div className="section">
-        <h4 className="section-title"><BarChart3 size={15} /> Distribution des similitudes</h4>
-        <DistributionBar distribution={distribution} />
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
-          <StatCard title="Excellent (80–100%)" value={distribution.excellent.count} unit="cycles" colorClass="stat-card-emerald" icon={Award} />
-          <StatCard title="Bon (50–79%)" value={distribution.good.count} unit="cycles" colorClass="stat-card-blue" icon={Target} />
-          <StatCard title="Faible (<50%)" value={distribution.low.count} unit="cycles" colorClass="stat-card-amber" icon={Minus} />
+      {matches.length > 0 && (
+        <div className="section">
+          <h4 className="section-title"><BarChart3 size={15} /> Distribution des similitudes
+            <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>
+              {matches.length} matches détectés
+            </span>
+          </h4>
+          <SimilarityDistribution
+            matches={matches}
+            threshold={distThreshold}
+            onThresholdChange={setDistThreshold}
+          />
         </div>
-      </div>
+      )}
 
       {/* Pattern Info */}
       <div className="section">

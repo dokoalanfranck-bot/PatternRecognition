@@ -1,56 +1,93 @@
-import React, { useMemo, memo } from "react"
+import React, { useMemo, useState, memo } from "react"
 import Plot from "react-plotly.js"
 import { BarChart3 } from "lucide-react"
 
 const PLOT_CONFIG = { scrollZoom: true, displayModeBar: true }
 
-const LAYOUT_BASE = {
-  height: 260,
-  margin: { t: 10, b: 45, l: 50, r: 20 },
-  xaxis: {
-    title: { text: "Sous-séquence (position)", font: { size: 11, color: "#64748b" } },
-    showgrid: false,
-    tickfont: { color: "#94a3b8", size: 10 },
-    tickcolor: "#334155",
-    linecolor: "#334155",
-  },
-  yaxis: {
-    title: { text: "Score (distance euclidienne)", font: { size: 11, color: "#64748b" } },
-    showgrid: true,
-    gridcolor: "rgba(148,163,184,0.08)",
-    tickfont: { color: "#94a3b8", size: 10 },
-    tickcolor: "#334155",
-    linecolor: "#334155",
-    zeroline: false,
-  },
-  plot_bgcolor: "transparent",
-  paper_bgcolor: "transparent",
-  showlegend: false,
-  bargap: 0.1,
-  font: { family: "Inter, sans-serif" },
+function toSimilarity(scores) {
+  if (!scores || scores.length === 0) return []
+  const raw = scores.map(s => s.score)
+  const minS = Math.min(...raw)
+  const maxS = Math.max(...raw)
+  const range = maxS - minS
+  return raw.map(s => range === 0 ? 100 : Math.round((1 - (s - minS) / range) * 100))
 }
 
 const ScoreDistribution = memo(({ allScores, matches }) => {
-  const topScores = useMemo(
-    () => new Set((matches || []).map(m => m.score)),
-    [matches]
-  )
+  const [threshold, setThreshold] = useState(50)
+
+  const similarities = useMemo(() => toSimilarity(allScores), [allScores])
+
+  const { aboveCount, belowCount } = useMemo(() => {
+    let above = 0, below = 0
+    similarities.forEach(sim => sim >= threshold ? above++ : below++)
+    return { aboveCount: above, belowCount: below }
+  }, [similarities, threshold])
 
   const plotData = useMemo(() => {
     if (!allScores || allScores.length === 0) return []
-    const scores = allScores.map(s => s.score)
     const indices = allScores.map((_, i) => i + 1)
     return [{
       x: indices,
-      y: scores,
+      y: similarities,
       type: "bar",
       marker: {
-        color: scores.map(s => topScores.has(s) ? "#f87171" : "rgba(129,140,248,0.3)"),
+        color: similarities.map(sim =>
+          sim >= threshold ? "rgba(99,102,241,0.85)" : "rgba(148,163,184,0.25)"
+        ),
         line: { width: 0 }
       },
-      hovertemplate: "Sous-séquence #%{x}<br>Score : %{y:.2f}<extra></extra>"
+      hovertemplate: "Sous-séquence #%{x}<br>Similarité : %{y}%<extra></extra>"
     }]
-  }, [allScores, topScores])
+  }, [allScores, similarities, threshold])
+
+  const layout = useMemo(() => ({
+    height: 260,
+    margin: { t: 10, b: 45, l: 50, r: 20 },
+    xaxis: {
+      title: { text: "Sous-séquence (position)", font: { size: 11, color: "#64748b" } },
+      showgrid: false,
+      tickfont: { color: "#94a3b8", size: 10 },
+      tickcolor: "#334155",
+      linecolor: "#334155",
+    },
+    yaxis: {
+      title: { text: "Similarité (%)", font: { size: 11, color: "#64748b" } },
+      range: [0, 105],
+      showgrid: true,
+      gridcolor: "rgba(148,163,184,0.08)",
+      tickfont: { color: "#94a3b8", size: 10 },
+      tickcolor: "#334155",
+      linecolor: "#334155",
+      zeroline: false,
+    },
+    shapes: [{
+      type: "line",
+      x0: 0,
+      x1: 1,
+      xref: "paper",
+      y0: threshold,
+      y1: threshold,
+      yref: "y",
+      line: { color: "#f59e0b", width: 2, dash: "dot" }
+    }],
+    annotations: [{
+      x: 1,
+      y: threshold,
+      xref: "paper",
+      yref: "y",
+      text: `${threshold}%`,
+      showarrow: false,
+      xanchor: "left",
+      font: { color: "#f59e0b", size: 11, family: "Inter, sans-serif" },
+      xshift: 4,
+    }],
+    plot_bgcolor: "transparent",
+    paper_bgcolor: "transparent",
+    showlegend: false,
+    bargap: 0.1,
+    font: { family: "Inter, sans-serif" },
+  }), [threshold])
 
   if (!allScores || allScores.length === 0) return null
 
@@ -61,20 +98,73 @@ const ScoreDistribution = memo(({ allScores, matches }) => {
         display: 'flex', alignItems: 'center', gap: 8,
       }}>
         <BarChart3 size={16} style={{ color: 'var(--accent-indigo)' }} />
-        Scores de similarité
+        Distribution des similitudes
         <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 12, marginLeft: 4 }}>
-          {allScores.length} sous-séquences · {(matches || []).length} top matches
-          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#f87171', marginLeft: 6, verticalAlign: 'middle' }} />
+          {allScores.length} sous-séquences
         </span>
       </h3>
 
       <Plot
         data={plotData}
-        layout={LAYOUT_BASE}
+        layout={layout}
         style={{ width: "100%" }}
         useResizeHandler
         config={PLOT_CONFIG}
       />
+
+      {/* Slider seuil */}
+      <div style={{ padding: '8px 4px 2px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Seuil de similarité</span>
+          <span style={{
+            fontSize: 13, fontWeight: 700, color: '#f59e0b',
+            background: 'rgba(245,158,11,0.12)', borderRadius: 6, padding: '1px 8px'
+          }}>
+            {threshold}%
+          </span>
+        </div>
+
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={threshold}
+          onChange={e => setThreshold(Number(e.target.value))}
+          style={{ width: '100%', accentColor: '#f59e0b', cursor: 'pointer' }}
+        />
+
+        <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
+          <div style={{
+            flex: 1, background: 'rgba(99,102,241,0.10)', borderRadius: 8,
+            padding: '8px 12px', borderLeft: '3px solid rgba(99,102,241,0.7)'
+          }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>
+              ≥ {threshold}% (dans le seuil)
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: 'rgba(129,140,248,0.95)' }}>
+              {aboveCount}
+              <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 4 }}>
+                sous-séquences
+              </span>
+            </div>
+          </div>
+          <div style={{
+            flex: 1, background: 'rgba(148,163,184,0.07)', borderRadius: 8,
+            padding: '8px 12px', borderLeft: '3px solid rgba(148,163,184,0.3)'
+          }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>
+              &lt; {threshold}% (hors seuil)
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-muted)' }}>
+              {belowCount}
+              <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 4 }}>
+                sous-séquences
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 })

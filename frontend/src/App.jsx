@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, memo } from "react"
 import { fetchData, fetchDataRange, computeAllScores } from "./api/api"
-import { Activity, ChevronLeft, ChevronRight, BarChart3, BookOpen, Radio, ArrowLeft, Loader, Calendar, Search } from "lucide-react"
+import { Activity, ChevronLeft, ChevronRight, BarChart3, BookOpen, Radio, ArrowLeft, Loader, Calendar, Search, Sun, Moon } from "lucide-react"
 import EnergyGraph from "./components/EnergyGraph"
 import SimilarPatterns from "./components/SimilarPatterns"
 import ScoreDistribution from "./components/ScoreDistribution"
@@ -113,7 +113,14 @@ function App() {
   const [dataset, setDataset] = useState(null)
   const [data, setData] = useState([])
   const [matches, setMatches] = useState([])
+  const [allMatchesRaw, setAllMatchesRaw] = useState([])
   const [allScores, setAllScores] = useState([])
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark')
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('theme', theme)
+  }, [theme])
   const [monitoring, setMonitoring] = useState(null)
   const [focusedMatch, setFocusedMatch] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -190,6 +197,7 @@ function App() {
     setOffset(0)
     setData([])
     setMatches([])
+    setAllMatchesRaw([])
     setAllScores([])
     setMonitoring(null)
     setPeriodInfo(null)
@@ -202,6 +210,7 @@ function App() {
     setDataset(null)
     setData([])
     setMatches([])
+    setAllMatchesRaw([])
     setAllScores([])
     setMonitoring(null)
     setPeriodInfo(null)
@@ -243,6 +252,15 @@ function App() {
             <Radio size={14} /> Temps Réel
           </button>
         </div>
+
+        <button
+          onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+          className="btn btn-sm btn-ghost"
+          title={theme === 'dark' ? 'Passer en mode clair' : 'Passer en mode sombre'}
+          style={{ marginLeft: 8, padding: '6px 10px' }}
+        >
+          {theme === 'dark' ? <Sun size={15} style={{ color: '#fbbf24' }} /> : <Moon size={15} style={{ color: '#4f46e5' }} />}
+        </button>
       </div>
 
       {/* ── Main Content ── */}
@@ -263,6 +281,7 @@ function App() {
             <EnergyGraph
               data={data}
               setMatches={setMatches}
+              setAllMatchesRaw={setAllMatchesRaw}
               setMonitoring={handleMonitoring}
               focusedMatch={focusedMatch}
               dataset={dataset}
@@ -271,6 +290,7 @@ function App() {
             <MonitoringPanel
               monitoring={monitoring}
               matchCount={matches.length}
+              matches={allMatchesRaw}
               onPatternSaved={handlePatternSaved}
               dataset={dataset}
             />
@@ -291,7 +311,6 @@ function App() {
               </div>
             )}
 
-            <ScoreDistribution allScores={allScores} matches={matches} />
             <SimilarPatterns matches={matches} onNavigate={setFocusedMatch} filterMin={filterMin} filterMax={filterMax} />
           </div>
         )}

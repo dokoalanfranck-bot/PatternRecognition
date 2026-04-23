@@ -64,6 +64,58 @@
   --transition-slow: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* ═══ Light Theme ═════════════════════════════════════════════════════════════ */
+
+[data-theme="light"] {
+  --bg-primary: #f1f5f9;
+  --bg-secondary: #e2e8f0;
+  --bg-card: rgba(255, 255, 255, 0.75);
+  --bg-card-solid: #ffffff;
+  --bg-card-hover: rgba(241, 245, 249, 0.9);
+  --bg-elevated: rgba(226, 232, 240, 0.7);
+  --bg-input: rgba(255, 255, 255, 0.9);
+  --bg-glass: rgba(255, 255, 255, 0.5);
+
+  --border-subtle: rgba(100, 116, 139, 0.12);
+  --border-default: rgba(100, 116, 139, 0.2);
+  --border-hover: rgba(100, 116, 139, 0.35);
+  --border-accent: rgba(99, 102, 241, 0.35);
+
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --text-accent: #4f46e5;
+
+  --accent-indigo: #4f46e5;
+  --accent-blue: #2563eb;
+  --accent-cyan: #0891b2;
+  --accent-emerald: #059669;
+  --accent-amber: #d97706;
+  --accent-rose: #e11d48;
+  --accent-violet: #7c3aed;
+
+  --accent-indigo-bg: rgba(99, 102, 241, 0.1);
+  --accent-blue-bg: rgba(37, 99, 235, 0.1);
+  --accent-cyan-bg: rgba(8, 145, 178, 0.1);
+  --accent-emerald-bg: rgba(5, 150, 105, 0.1);
+  --accent-amber-bg: rgba(217, 119, 6, 0.1);
+  --accent-rose-bg: rgba(225, 29, 72, 0.1);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.15);
+  --shadow-glow-indigo: 0 0 20px rgba(99, 102, 241, 0.2);
+  --shadow-glow-cyan: 0 0 20px rgba(8, 145, 178, 0.2);
+  --shadow-glow-emerald: 0 0 20px rgba(5, 150, 105, 0.2);
+}
+
+[data-theme="light"] body {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.06), transparent),
+    radial-gradient(ellipse 60% 40% at 80% 50%, rgba(8, 145, 178, 0.04), transparent);
+}
+
 /* ═══ Base ═════════════════════════════════════════════════════════════════════ */
 
 body {
@@ -72,6 +124,7 @@ body {
     radial-gradient(ellipse 80% 50% at 50% -20%, rgba(129, 140, 248, 0.08), transparent),
     radial-gradient(ellipse 60% 40% at 80% 50%, rgba(34, 211, 238, 0.04), transparent);
   min-height: 100vh;
+  transition: background var(--transition-base), color var(--transition-base);
 }
 
 /* ═══ Glass Card ══════════════════════════════════════════════════════════════ */
@@ -470,6 +523,11 @@ input[type="range"]::-webkit-slider-thumb:hover {
 @keyframes gradientShift {
   0%, 100% { background-position: 0% 50%; }
   50% { background-position: 100% 50%; }
+}
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
 }
 
 .animate-in {

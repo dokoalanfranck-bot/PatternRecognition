@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import Plot from "react-plotly.js"
 import Plotly from "plotly.js/dist/plotly.min"
 import { detectPattern } from "../api/api"
-import { Search, ChevronLeft, ChevronRight, RotateCcw, X, AlertTriangle, Loader } from "lucide-react"
+import { Search, ChevronLeft, ChevronRight, RotateCcw, X, AlertTriangle, Loader, Sparkles } from "lucide-react"
 import FilterPanel from "./FilterPanel"
 
 let abortController = null
@@ -13,7 +13,7 @@ const COLORS = { high: "#34d399", mid: "#60a5fa", low: "#fbbf24", sel: "#fb7185"
 const Y0 = 0.12
 const PLOT_CFG = {
   scrollZoom: true, displayModeBar: true,
-  modeBarButtonsToAdd: ["zoomIn2d", "zoomOut2d", "autoScale2d"]
+  modeBarButtonsToAdd: ["zoomIn2d", "zoomOut2d", "autoScale2d", "lasso2d"]
 }
 
 function getColor(sim) {
@@ -34,12 +34,14 @@ function enrichMatches(raw) {
 
 export default function EnergyGraph({
   data, setMatches: setParentMatches,
+  setAllMatchesRaw,
   setMonitoring, focusedMatch, dataset
 }) {
   const [allMatches, setAllMatches] = useState([])
   const [filtered, setFiltered] = useState([])
   const [visibleMatches, setVisibleMatches] = useState([])
   const [selected, setSelected] = useState(null)
+  const [pendingSelection, setPendingSelection] = useState(null)
   const [focusIndex, setFocusIndex] = useState(-1)
   const [error, setError] = useState(null)
   const [searching, setSearching] = useState(false)
@@ -132,15 +134,13 @@ export default function EnergyGraph({
   }, [setParentMatches, startBatch])
 
   // ── Search ──
-  const handleSelected = useCallback(async (event) => {
-    if (!event?.range) return
-    const [start, end] = event.range.x
-
+  const launchSearch = useCallback(async (start, end) => {
     if (batchTimer.current) clearTimeout(batchTimer.current)
     if (abortController) abortController.abort()
     abortController = new AbortController()
 
     setSelected({ start, end })
+    setPendingSelection(null)
     setFocusIndex(-1)
     setError(null)
     setSearching(true)
@@ -149,6 +149,7 @@ export default function EnergyGraph({
     setVisibleMatches([])
     setBatchProgress(null)
     if (setParentMatches) setParentMatches([])
+    if (setAllMatchesRaw) setAllMatchesRaw([])
     if (setMonitoring) setMonitoring(null)
 
     try {
@@ -157,6 +158,7 @@ export default function EnergyGraph({
       const enriched = enrichMatches(result.matches || [])
       if (!enriched.length) { setError("Aucun pattern similaire trouvé."); return }
       setAllMatches(enriched)
+      if (setAllMatchesRaw) setAllMatchesRaw(enriched)
       if (setMonitoring) setMonitoring(result.monitoring || null)
     } catch {
       setError("Erreur lors de la recherche.")
@@ -164,7 +166,15 @@ export default function EnergyGraph({
     } finally {
       setSearching(false)
     }
-  }, [setParentMatches, setMonitoring, dataset])
+  }, [setParentMatches, setAllMatchesRaw, setMonitoring, dataset])
+
+  const handleSelected = useCallback((event) => {
+    if (!event?.range) return
+    const [start, end] = event.range.x
+    setSelected(null)
+    setPendingSelection({ start, end })
+    setError(null)
+  }, [])
 
   // ── Navigation ──
   const computeYRange = useCallback((x0, x1) => {
@@ -188,7 +198,7 @@ export default function EnergyGraph({
     if (el) {
       const upd = { "xaxis.range[0]": x0, "xaxis.range[1]": x1 }
       if (yr) { upd["yaxis.range[0]"] = yr[0]; upd["yaxis.range[1]"] = yr[1] }
-      Plotly.relayout(el, upd)
+      requestAnimationFrame(() => { try { Plotly.relayout(el, upd) } catch (_) {} })
     }
     setFocusIndex(filtered.findIndex(m => m.start === match.start && m.end === match.end))
   }, [filtered, computeYRange])
@@ -205,7 +215,7 @@ export default function EnergyGraph({
 
   const resetZoom = useCallback(() => {
     const el = plotRef.current?.el
-    if (el) Plotly.relayout(el, { "xaxis.autorange": true, "yaxis.autorange": true })
+    if (el) requestAnimationFrame(() => { try { Plotly.relayout(el, { "xaxis.autorange": true, "yaxis.autorange": true }) } catch (_) {} })
     setFocusIndex(-1)
   }, [])
 
@@ -306,6 +316,64 @@ export default function EnergyGraph({
           </div>
         )}
       </div>
+
+      {/* Confirmation de recherche */}
+      {pendingSelection && !searching && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: 12, marginTop: 12,
+          animation: 'fadeSlideUp 0.25s cubic-bezier(0.34,1.56,0.64,1)',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(129,140,248,0.06))',
+            border: '1px solid rgba(129,140,248,0.25)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '10px 18px',
+            backdropFilter: 'blur(12px)',
+            boxShadow: '0 4px 24px rgba(99,102,241,0.12)',
+          }}>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              Plage sélectionnée — lancer la recherche ?
+            </span>
+            <button
+              onClick={() => launchSearch(pendingSelection.start, pendingSelection.end)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 7,
+                padding: '7px 18px',
+                background: 'linear-gradient(135deg, #6366f1, #818cf8)',
+                border: 'none', borderRadius: 'var(--radius-sm)',
+                color: '#fff', fontSize: 13, fontWeight: 700,
+                cursor: 'pointer',
+                boxShadow: '0 2px 12px rgba(99,102,241,0.35)',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={e => e.currentTarget.style.boxShadow = '0 4px 20px rgba(99,102,241,0.55)'}
+              onMouseLeave={e => e.currentTarget.style.boxShadow = '0 2px 12px rgba(99,102,241,0.35)'}
+            >
+              <Sparkles size={14} />
+              Analyser
+            </button>
+            <button
+              onClick={() => { setPendingSelection(null) }}
+              style={{
+                display: 'inline-flex', alignItems: 'center',
+                padding: '7px 10px',
+                background: 'transparent',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-sm)',
+                color: 'var(--text-muted)', fontSize: 12,
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-hover)'; e.currentTarget.style.color = 'var(--text-primary)' }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-subtle)'; e.currentTarget.style.color = 'var(--text-muted)' }}
+            >
+              <X size={13} />
+            </button>
+          </div>
+        </div>
+      )}
 
       <FilterPanel allMatches={allMatches} onFilterChange={handleFilterChange} />
     </div>
