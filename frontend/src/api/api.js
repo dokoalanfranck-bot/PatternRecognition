@@ -4,6 +4,41 @@ const API = axios.create({
   baseURL: "http://127.0.0.1:8000"
 })
 
+// ─── Intercepteur : injecte le token JWT dans chaque requête ──────────────────
+API.interceptors.request.use((config) => {
+  const token = localStorage.getItem("auth_token")
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+// ─── Intercepteur : redirige vers login si 401 ───────────────────────────────
+API.interceptors.response.use(
+  (res) => res,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem("auth_token")
+      localStorage.removeItem("auth_username")
+      window.dispatchEvent(new Event("auth:logout"))
+    }
+    return Promise.reject(error)
+  }
+)
+
+// ═══ Authentification ══════════════════════════════════════════════════════════
+export const login = async (username, password) => {
+  const res = await API.post("/auth/login", { username, password })
+  return res.data
+}
+
+export const changePassword = async (currentPassword, newPassword, confirmPassword) => {
+  const res = await API.post("/auth/change-password", {
+    current_password: currentPassword,
+    new_password: newPassword,
+    confirm_password: confirmPassword,
+  })
+  return res.data
+}
+
 // ═══ Datasets ══════════════════════════════════════════════════════════════════
 export const fetchDatasets = async () => {
   const res = await API.get("/datasets")

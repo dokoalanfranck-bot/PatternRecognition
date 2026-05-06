@@ -7,8 +7,9 @@ import {
   Play, Square, Activity, AlertCircle, Clock, Zap,
   Loader, Trash2, Radio, AlertTriangle, Info, Shield, Eye,
   ChevronDown, ChevronUp, TrendingUp, FileText, Settings, Target,
-  CheckCircle, Bell, Cpu, XCircle
+  CheckCircle, Bell, Cpu, XCircle, Download
 } from "lucide-react"
+import { generateRealtimeReport } from "../utils/generateRealtimeReport"
 
 // =============================================================================
 //  CONSTANTES & HELPERS
@@ -396,17 +397,19 @@ const LiveChartWithOverlay = memo(({ bufferData, detectors, bufferSize }) => {
           </span>
         )}
       </h4>
-      <Plot
-        data={traces}
-        layout={darkLayout({
-          height: 220,
-          margin: { l: 44, r: 14, t: 6, b: 24 },
-          showlegend: true,
-          yaxis: { ...darkLayout().yaxis, title: { text: "Valeur", font: { size: 9, color: "#475569" } } },
-        })}
-        config={{ responsive: true, displayModeBar: false }}
-        style={{ width: "100%", height: 220 }}
-      />
+      <div id="realtime-live-chart">
+        <Plot
+          data={traces}
+          layout={darkLayout({
+            height: 220,
+            margin: { l: 44, r: 14, t: 6, b: 24 },
+            showlegend: true,
+            yaxis: { ...darkLayout().yaxis, title: { text: "Valeur", font: { size: 9, color: "#475569" } } },
+          })}
+          config={{ responsive: true, displayModeBar: false }}
+          style={{ width: "100%", height: 220 }}
+        />
+      </div>
     </div>
   )
 })
@@ -798,11 +801,28 @@ const RealtimeMonitor = memo(({ dataset }) => {
   const [patternCount, setPatternCount] = useState(null)
   const [startError, setStartError] = useState(null)
   const [toasts, setToasts] = useState([])
+  const [pdfLoading, setPdfLoading] = useState(false)
+  const [snapshots, setSnapshots] = useState([])
   const pollRef = useRef(null)
   const seenMatchesRef = useRef(new Set())
+  const prevGlobalLevelRef = useRef("normal")
+  const captureSnapshotRef = useRef(null)
 
   const dismissToast = useCallback((id) => {
     setToasts(t => t.filter(toast => toast.id !== id))
+  }, [])
+
+  const captureAnomalySnapshot = useCallback(async ({ patternName, confidence, level }) => {
+    try {
+      const el = document.getElementById("realtime-live-chart")
+      if (!el) return
+      const imageData = await window.Plotly?.toImage(el, { format: "png", width: 900, height: 280, scale: 1.5 })
+      if (!imageData) return
+      setSnapshots(prev => [
+        ...prev.slice(-4),
+        { timestamp: Date.now(), patternName, confidence, level, imageData },
+      ])
+    } catch (_) {}
   }, [])
 
   const startPolling = useCallback(() => {
@@ -812,7 +832,7 @@ const RealtimeMonitor = memo(({ dataset }) => {
         const s = await getRealtimeStatus()
         setStatus(s)
 
-        // Detecter nouveaux matches pour les toasts
+        // Detecter nouveaux matches pour les toasts + captures
         const newMatches = (s.events || []).filter(e => e.type === "new_match")
         newMatches.forEach(e => {
           const key = `${e.pattern_id}-${e.detections_count}-${e.timestamp}`
@@ -821,8 +841,19 @@ const RealtimeMonitor = memo(({ dataset }) => {
             const id = Date.now() + Math.random()
             setToasts(t => [...t.slice(-4), { id, event: e }])
             setTimeout(() => setToasts(t => t.filter(toast => toast.id !== id)), 7000)
+            // Capture screenshot at anomaly match
+            captureSnapshotRef.current?.({ patternName: e.pattern_name, confidence: e.confidence || 0, level: s.global_level || "critique" })
           }
         })
+
+        // Capture on first reach of danger / critique level
+        const currentLevel = s.global_level || "normal"
+        const prev = prevGlobalLevelRef.current
+        if (["danger", "critique"].includes(currentLevel) && !["danger", "critique"].includes(prev)) {
+          const best = (s.detectors || []).reduce((a, b) => (b.confidence || 0) > (a.confidence || 0) ? b : a, s.detectors?.[0] || {})
+          captureSnapshotRef.current?.({ patternName: best?.name || "—", confidence: best?.confidence || 0, level: currentLevel })
+        }
+        prevGlobalLevelRef.current = currentLevel
 
         if (!s.running) {
           clearInterval(pollRef.current)
@@ -876,6 +907,22 @@ const RealtimeMonitor = memo(({ dataset }) => {
     try { await clearRealtimeEvents(); setStatus(p => p ? { ...p, events: [] } : p) } catch (err) { /* ignore */ }
   }, [])
 
+  // keep captureSnapshotRef fresh (no stale closure)
+  captureSnapshotRef.current = captureAnomalySnapshot
+
+  const handleDownloadPdf = useCallback(async () => {
+    if (!status) return
+    setPdfLoading(true)
+    try {
+      await new Promise(r => setTimeout(r, 80))
+      generateRealtimeReport(status, dataset, snapshots)
+    } catch (err) {
+      console.error("Erreur génération PDF", err)
+    } finally {
+      setPdfLoading(false)
+    }
+  }, [status, dataset, snapshots])
+
   const isRunning = status?.running || false
   const events = status?.events || []
   const detectors = status?.detectors || []
@@ -915,7 +962,27 @@ const RealtimeMonitor = memo(({ dataset }) => {
           </p>
         </div>
 
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {snapshots.length > 0 && (
+            <span style={{
+              fontSize: 11, fontWeight: 700, color: "#f87171",
+              background: "rgba(239,68,68,.12)", padding: "3px 10px", borderRadius: 20,
+              border: "1px solid rgba(239,68,68,.25)",
+            }}>📸 {snapshots.length} capture(s)</span>
+          )}
+          {status && (
+            <button
+              className="btn btn-pdf"
+              onClick={handleDownloadPdf}
+              disabled={pdfLoading}
+              title="Télécharger le rapport PDF"
+            >
+              {pdfLoading
+                ? <><Loader size={13} style={{ animation: "spin 1s linear infinite" }} /> Génération…</>
+                : <><Download size={13} /> Rapport PDF</>
+              }
+            </button>
+          )}
           {isRunning && (
             <button className="btn btn-danger" onClick={handleStop} style={{ fontWeight: 600 }}>
               <Square size={13} /> Arreter

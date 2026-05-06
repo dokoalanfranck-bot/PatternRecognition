@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, memo } from "react"
 import { fetchData, fetchDataRange, computeAllScores } from "./api/api"
-import { Activity, ChevronLeft, ChevronRight, BarChart3, BookOpen, Radio, ArrowLeft, Loader, Calendar, Search, Sun, Moon } from "lucide-react"
+import { Activity, ChevronLeft, ChevronRight, BarChart3, BookOpen, Radio, ArrowLeft, Loader, Calendar, Search, Sun, Moon, Settings, LogOut } from "lucide-react"
 import EnergyGraph from "./components/EnergyGraph"
 import SimilarPatterns from "./components/SimilarPatterns"
 import ScoreDistribution from "./components/ScoreDistribution"
@@ -8,6 +8,8 @@ import MonitoringPanel from "./components/MonitoringPanel"
 import PatternLibrary from "./components/PatternLibrary"
 import RealtimeMonitor from "./components/RealtimeMonitor"
 import DatasetSelector from "./components/DatasetSelector"
+import LoginPage from "./components/LoginPage"
+import SettingsPage from "./components/SettingsPage"
 import "./App.css"
 
 const PERIODS = [
@@ -110,6 +112,24 @@ const NavBar = memo(({ period, offset, periodInfo, loading, onPrev, onNext, onPe
 ))
 
 function App() {
+  // ── Auth ─────────────────────────────────────────────────────────────────
+  const [authUser, setAuthUser] = useState(() => localStorage.getItem("auth_username") || null)
+
+  useEffect(() => {
+    const handleLogout = () => setAuthUser(null)
+    window.addEventListener("auth:logout", handleLogout)
+    return () => window.removeEventListener("auth:logout", handleLogout)
+  }, [])
+
+  const handleLogin = useCallback((username) => { setAuthUser(username) }, [])
+
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem("auth_token")
+    localStorage.removeItem("auth_username")
+    setAuthUser(null)
+  }, [])
+
+  // ── Data & UI ─────────────────────────────────────────────────────────────
   const [dataset, setDataset] = useState(null)
   const [data, setData] = useState([])
   const [matches, setMatches] = useState([])
@@ -220,6 +240,11 @@ function App() {
 
   const showScoreButton = matches.length > 0 && allScores.length === 0
 
+  // ── Auth guard ────────────────────────────────────────────────────────────
+  if (!authUser) {
+    return <LoginPage onLogin={handleLogin} />
+  }
+
   if (!dataset) {
     return <DatasetSelector onSelect={handleSelectDataset} />
   }
@@ -251,6 +276,10 @@ function App() {
             onClick={() => setTab("realtime")}>
             <Radio size={14} /> Temps Réel
           </button>
+          <button className={`tab-pill ${tab === "settings" ? "active" : ""}`}
+            onClick={() => setTab("settings")}>
+            <Settings size={14} /> Paramètres
+          </button>
         </div>
 
         <button
@@ -260,6 +289,15 @@ function App() {
           style={{ marginLeft: 8, padding: '6px 10px' }}
         >
           {theme === 'dark' ? <Sun size={15} style={{ color: '#fbbf24' }} /> : <Moon size={15} style={{ color: '#4f46e5' }} />}
+        </button>
+
+        <button
+          onClick={handleLogout}
+          className="btn btn-sm btn-ghost"
+          title="Se déconnecter"
+          style={{ padding: '6px 10px', color: 'var(--accent-rose)' }}
+        >
+          <LogOut size={15} />
         </button>
       </div>
 
@@ -324,6 +362,12 @@ function App() {
         {tab === "realtime" && (
           <div className="animate-in">
             <RealtimeMonitor dataset={dataset} />
+          </div>
+        )}
+
+        {tab === "settings" && (
+          <div className="animate-in">
+            <SettingsPage username={authUser} />
           </div>
         )}
       </div>

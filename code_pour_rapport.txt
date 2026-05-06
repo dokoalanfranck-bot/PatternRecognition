@@ -1,0 +1,2272 @@
+﻿# CODE SOURCE COMPLET — PFE BIZEYES / EL MAZRAA
+# Systeme de reconnaissance de motifs temporels
+# Stack : FastAPI + React 19 + SQLite + stumpy (MASS)
+
+
+## FICHIER : backend\main.py  (22 lignes)
+```
+from fastapi import FastAPI
+from backend.api.pattern import router as pattern_router
+from fastapi.middleware.cors import CORSMiddleware
+from backend.api.data import router as data_router
+from backend.api.realtime import router as realtime_router
+from backend.api.auth import router as auth_router
+
+app = FastAPI()
+
+app.include_router(auth_router)
+app.include_router(data_router)
+app.include_router(pattern_router)
+app.include_router(realtime_router)
+
+app.add_middleware(
+	CORSMiddleware,
+	allow_origins=["*"],
+	allow_credentials=True,
+	allow_methods=["*"],
+	allow_headers=["*"],
+)
+
+
+```
+
+## FICHIER : backend\api\auth.py  (86 lignes)
+```
+from datetime import datetime, timedelta, timezone
+from fastapi import APIRouter, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import JWTError, jwt
+from backend.services import database as db
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+# ─── Configuration JWT ─────────────────────────────────────────────────────
+_SECRET_KEY = "pfe-pattern-recognition-secret-key-2026"
+_ALGORITHM = "HS256"
+_TOKEN_EXPIRE_HOURS = 8
+
+_bearer = HTTPBearer()
+
+
+# ─── Helpers ───────────────────────────────────────────────────────────────
+
+def _create_token(username: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(hours=_TOKEN_EXPIRE_HOURS)
+    return jwt.encode(
+        {"sub": username, "exp": expire},
+        _SECRET_KEY,
+        algorithm=_ALGORITHM,
+    )
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+    """Dependency: valide le token et retourne le username."""
+    try:
+        payload = jwt.decode(credentials.credentials, _SECRET_KEY, algorithms=[_ALGORITHM])
+        username: str = payload.get("sub")
+        if not username:
+            raise HTTPException(status_code=401, detail="Token invalide.")
+        return username
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Token invalide ou expiré.")
+
+
+# ─── Endpoints ─────────────────────────────────────────────────────────────
+
+@router.post("/login")
+def login(body: dict):
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Identifiants requis.")
+
+    user = db.get_user(username)
+    if not user or not db.verify_password(password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Nom d'utilisateur ou mot de passe incorrect.")
+
+    return {
+        "access_token": _create_token(username),
+        "token_type": "bearer",
+        "username": username,
+    }
+
+
+@router.post("/change-password")
+def change_password(body: dict, username: str = Depends(get_current_user)):
+    current = body.get("current_password") or ""
+    new_pwd = body.get("new_password") or ""
+    confirm = body.get("confirm_password") or ""
+
+    if not current or not new_pwd or not confirm:
+        raise HTTPException(status_code=400, detail="Tous les champs sont requis.")
+
+    if new_pwd != confirm:
+        raise HTTPException(status_code=400, detail="Le nouveau mot de passe et la confirmation ne correspondent pas.")
+
+    if len(new_pwd) < 6:
+        raise HTTPException(status_code=400, detail="Le mot de passe doit contenir au moins 6 caractères.")
+
+    user = db.get_user(username)
+    if not user or not db.verify_password(current, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Mot de passe actuel incorrect.")
+
+    db.set_password(username, new_pwd)
+    return {"message": "Mot de passe modifié avec succès."}
+
+
+@router.get("/me")
+def me(username: str = Depends(get_current_user)):
+    return {"username": username}
+
+```
+
+## FICHIER : backend\api\data.py  (102 lignes)
+```
+import pandas as pd
+from fastapi import APIRouter
+from backend.services.data_loader import load_dataset, list_datasets
+
+router = APIRouter()
+
+
+@router.get("/datasets")
+def get_datasets():
+    """Liste tous les fichiers CSV disponibles."""
+    return {"datasets": list_datasets()}
+
+
+def _period_bounds(data, period, offset):
+    """Calcule les bornes temporelles pour un period+offset donné."""
+    min_date = data.index.min()
+    max_date = data.index.max()
+
+    if period == "day":
+        base = pd.Timestamp(min_date.year, min_date.month, min_date.day)
+        start = base + pd.DateOffset(days=offset)
+        end = start + pd.DateOffset(days=1)
+        last = pd.Timestamp(max_date.year, max_date.month, max_date.day)
+        total = (last - base).days + 1
+    elif period == "week":
+        base = pd.Timestamp(min_date.year, min_date.month, min_date.day) - pd.DateOffset(days=min_date.weekday())
+        start = base + pd.DateOffset(weeks=offset)
+        end = start + pd.DateOffset(weeks=1)
+        last = pd.Timestamp(max_date.year, max_date.month, max_date.day) - pd.DateOffset(days=max_date.weekday())
+        total = max(1, ((last - base).days // 7) + 1)
+    elif period == "month":
+        base = pd.Timestamp(min_date.year, min_date.month, 1)
+        start = base + pd.DateOffset(months=offset)
+        end = start + pd.DateOffset(months=1)
+        last = pd.Timestamp(max_date.year, max_date.month, 1)
+        total = (last.year - base.year) * 12 + (last.month - base.month) + 1
+    elif period == "year":
+        base = pd.Timestamp(min_date.year, 1, 1)
+        start = base + pd.DateOffset(years=offset)
+        end = start + pd.DateOffset(years=1)
+        total = max_date.year - min_date.year + 1
+    else:
+        return _period_bounds(data, "month", offset)
+
+    return start, end, total
+
+
+@router.get("/data")
+def get_data(period: str = "month", offset: int = 0, dataset: str = None,
+             start: str = None, end: str = None):
+    """
+    Pagination temporelle des données.
+    period : day | week | month | year | custom
+    offset : 0 = première période, 1 = suivante, etc.
+    start/end : plage personnalisée (ISO dates), utilisé quand period=custom
+    """
+    data = load_dataset(dataset)
+
+    if period == "custom" and start and end:
+        ts_start = pd.Timestamp(start)
+        ts_end = pd.Timestamp(end)
+        result = data.loc[(data.index >= ts_start) & (data.index < ts_end)].reset_index().to_dict(orient="records")
+        return {
+            "points": result,
+            "period": "custom",
+            "offset": 0,
+            "total_periods": 1,
+            "current_start": ts_start.isoformat(),
+            "current_end": ts_end.isoformat(),
+            "total_points": len(data),
+            "period_points": len(result),
+        }
+
+    ts_start, ts_end, total_periods = _period_bounds(data, period, offset)
+
+    # Clamp offset
+    offset = max(0, min(offset, total_periods - 1))
+    if offset != max(0, min(offset, total_periods - 1)):
+        ts_start, ts_end, total_periods = _period_bounds(data, period, offset)
+
+    result = data.loc[(data.index >= ts_start) & (data.index < ts_end)].reset_index().to_dict(orient="records")
+
+    return {
+        "points": result,
+        "period": period,
+        "offset": offset,
+        "total_periods": total_periods,
+        "current_start": ts_start.isoformat(),
+        "current_end": ts_end.isoformat(),
+        "total_points": len(data),
+        "period_points": len(result),
+    }
+
+
+@router.get("/data/range")
+def get_data_range(dataset: str = None):
+    """Retourne la plage de dates min/max du dataset."""
+    data = load_dataset(dataset)
+    return {
+        "min_date": data.index.min().isoformat(),
+        "max_date": data.index.max().isoformat(),
+    }
+```
+
+## FICHIER : backend\api\pattern.py  (323 lignes)
+```
+from fastapi import APIRouter
+from fastapi.concurrency import run_in_threadpool
+from backend.services.data_loader import load_dataset
+from backend.services.dtw_similarity import search_pattern, z_normalize
+from backend.services import database as db
+import numpy as np
+import time
+
+router = APIRouter()
+
+
+def _get_data(dataset=None):
+    data = load_dataset(dataset)
+    series = data["value"].values
+    dates = data.index
+    return data, series, dates
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ANALYSE — Recherche de patterns dans la série
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/pattern")
+async def detect_pattern(request: dict):
+    start = request["start"]
+    end = request["end"]
+    top_k = int(request.get("top_k", 0))
+    dataset = request.get("dataset")
+
+    def _detect():
+        data, series, dates = _get_data(dataset)
+        t0 = time.time()
+        pattern = data.loc[start:end]["value"].values
+
+        if len(pattern) < 10:
+            return {"matches": [], "error": "Sélection trop courte (min 10 points)."}
+
+        matches, diagnostics = search_pattern(series, pattern, top_k)
+        elapsed = time.time() - t0
+
+        # ─── Enrichir chaque match ─────────────────────────────────────────
+        results = []
+        for m in matches:
+            end_idx = min(m["index"] + len(pattern), len(dates) - 1)
+            window = series[m["index"]:m["index"] + len(pattern)]
+            results.append({
+                "start":      str(dates[m["index"]]),
+                "end":        str(dates[end_idx]),
+                "score":      float(m["score"]),
+                "match_mean": float(np.mean(window)),
+                "match_std":  float(np.std(window)),
+                "match_min":  float(np.min(window)),
+                "match_max":  float(np.max(window)),
+            })
+
+        # ─── Stats du pattern sélectionné ──────────────────────────────────
+        pat_slice = data.loc[start:end]
+        try:
+            dur_h = round((pat_slice.index[-1] - pat_slice.index[0]).total_seconds() / 3600, 2)
+        except Exception:
+            dur_h = 0
+
+        pattern_info = {
+            "nb_points":      len(pattern),
+            "start":          str(pat_slice.index[0]),
+            "end":            str(pat_slice.index[-1]),
+            "duration_hours": dur_h,
+            "amplitude":      round(float(np.ptp(pattern)), 4),
+            "mean":           round(float(np.mean(pattern)), 4),
+            "std":            round(float(np.std(pattern)), 4),
+            "min":            round(float(np.min(pattern)), 4),
+            "max":            round(float(np.max(pattern)), 4),
+            "energy_total":   round(float(np.sum(pattern)), 2),
+        }
+
+        # ─── Infos recherche ───────────────────────────────────────────────
+        search_info = {
+            "series_length":           len(series),
+            "total_positions_scanned": diagnostics["total_positions"],
+            "matches_returned":        len(results),
+            "computation_time_sec":    round(elapsed, 3),
+        }
+
+        # ─── Distribution de similarité ────────────────────────────────────
+        distribution, score_stats = _compute_distribution(results)
+
+        return {
+            "matches": results,
+            "monitoring": {
+                "pattern_info": pattern_info,
+                "search_info":  search_info,
+                "distribution": distribution,
+                "score_stats":  score_stats,
+            },
+        }
+
+    return await run_in_threadpool(_detect)
+
+
+@router.post("/scores")
+async def compute_all_scores(request: dict):
+    start = request["start"]
+    end = request["end"]
+    n_subseq = int(request.get("n_subseq", 1000))
+    dataset = request.get("dataset")
+
+    def _compute():
+        data, series, dates = _get_data(dataset)
+        pattern = data.loc[start:end]["value"].values
+        if len(pattern) < 10:
+            return {"scores": [], "error": "Sélection trop courte."}
+
+        pat_norm = z_normalize(pattern)
+        step = max(1, int(len(pattern) * 0.2))
+        positions = list(range(0, len(series) - len(pattern), step))[:n_subseq]
+
+        scores = []
+        for i in positions:
+            w = z_normalize(series[i:i + len(pattern)])
+            scores.append({"index": i, "score": float(np.sqrt(np.sum((pat_norm - w) ** 2)))})
+
+        return {"scores": scores, "total_subsequences": len(positions), "computed": len(scores)}
+
+    return await run_in_threadpool(_compute)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  BIBLIOTHÈQUE — CRUD patterns sauvegardés
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/patterns/save")
+async def save_pattern_endpoint(request: dict):
+    start = request["start"]
+    end = request["end"]
+    name = request.get("name", "").strip()
+    description = request.get("description", "").strip()
+    dataset = request.get("dataset")
+    pattern_type = request.get("pattern_type", "normal")
+    alert_threshold = float(request.get("alert_threshold", 55.0))
+    alert_type = request.get("alert_type", "anomaly")
+    
+    if pattern_type not in ("normal", "failure"):
+        pattern_type = "normal"
+    if alert_type not in ("anomaly", "failure"):
+        alert_type = "anomaly"
+    alert_threshold = max(0.0, min(100.0, alert_threshold))
+
+    if not name:
+        return {"error": "Le nom du pattern est obligatoire."}
+
+    data, series, dates = _get_data(dataset)
+    pat_slice = data.loc[start:end]
+    values = pat_slice["value"].tolist()
+    dates_list = [str(d) for d in pat_slice.index]
+
+    if len(values) < 10:
+        return {"error": "Pattern trop court (min 10 points)."}
+
+    # Stats à sauvegarder
+    arr = np.array(values)
+    try:
+        dur_h = round((pat_slice.index[-1] - pat_slice.index[0]).total_seconds() / 3600, 2)
+    except Exception:
+        dur_h = 0
+
+    stats = {
+        "nb_points":      len(values),
+        "duration_hours": dur_h,
+        "amplitude":      round(float(np.ptp(arr)), 4),
+        "mean":           round(float(np.mean(arr)), 4),
+        "std":            round(float(np.std(arr)), 4),
+        "min":            round(float(np.min(arr)), 4),
+        "max":            round(float(np.max(arr)), 4),
+    }
+
+    # Distribution des similarités
+    distribution = request.get("distribution")
+    if distribution:
+        stats["distribution"] = {
+            "excellent": distribution.get("excellent", {}).get("count", 0),
+            "good":      distribution.get("good", {}).get("count", 0),
+            "low":       distribution.get("low", {}).get("count", 0),
+        }
+
+    match_count = int(request.get("match_count", 0))
+
+    pid = db.save_pattern(name, description, values, dates_list, stats, match_count, 
+                          pattern_type, alert_threshold, alert_type, dataset=dataset or "")
+    return {"id": pid, "message": f"Pattern '{name}' sauvegardé avec seuil {alert_threshold}%.",
+            "alert_threshold": alert_threshold, "alert_type": alert_type}
+
+
+
+@router.get("/patterns")
+async def list_patterns_endpoint(dataset: str = None):
+    return {"patterns": db.list_patterns(dataset=dataset)}
+
+
+@router.get("/patterns/{pid}")
+async def get_pattern_endpoint(pid: int):
+    p = db.get_pattern(pid)
+    if not p:
+        return {"error": "Pattern introuvable."}
+    return p
+
+
+@router.put("/patterns/{pid}")
+async def update_pattern_endpoint(pid: int, request: dict):
+    """Mettre à jour les propriétés d'un pattern (type, seuil, alert_type, description)."""
+    if not db.get_pattern(pid):
+        return {"error": "Pattern introuvable."}
+    
+    pattern_type = request.get("pattern_type")
+    if pattern_type:
+        if pattern_type not in ("normal", "failure"):
+            return {"error": "Type invalide. Utilisez 'normal' ou 'failure'."}
+        db.update_pattern_type(pid, pattern_type)
+
+    alert_threshold = request.get("alert_threshold")
+    alert_type = request.get("alert_type")
+    if alert_threshold is not None or alert_type is not None:
+        if alert_threshold is not None:
+            alert_threshold = max(0.0, min(100.0, float(alert_threshold)))
+        if alert_type is not None and alert_type not in ("anomaly", "failure"):
+            return {"error": "alert_type invalide. Utilisez 'anomaly' ou 'failure'."}
+        db.update_pattern_threshold(pid, alert_threshold, alert_type)
+    
+    updated = db.get_pattern(pid)
+    return {"message": "Pattern mis à jour.", "id": pid,
+            "alert_threshold": updated.get("alert_threshold"), 
+            "alert_type": updated.get("alert_type")}
+
+
+@router.delete("/patterns/{pid}")
+async def delete_pattern_endpoint(pid: int):
+    db.delete_pattern(pid)
+    return {"message": "Pattern supprimé."}
+
+
+@router.post("/patterns/{pid}/compare")
+async def compare_pattern_endpoint(pid: int, request: dict):
+    """Compare un pattern stocké contre une portion de la série."""
+    stored = db.get_pattern(pid)
+    if not stored:
+        return {"error": "Pattern introuvable."}
+
+    start = request.get("start")
+    end = request.get("end")
+    dataset = request.get("dataset")
+
+    data, series, dates = _get_data(dataset)
+    ref_values = np.array(stored["values"], dtype=float)
+
+    if start and end:
+        target = data.loc[start:end]["value"].values
+    else:
+        target = series
+
+    def _compare():
+        matches, diag = search_pattern(target, ref_values, top_k=0)
+        results = []
+        target_dates = data.loc[start:end].index if start and end else dates
+        for m in matches:
+            end_idx = min(m["index"] + len(ref_values), len(target_dates) - 1)
+            results.append({
+                "start": str(target_dates[m["index"]]),
+                "end":   str(target_dates[end_idx]),
+                "score": float(m["score"]),
+            })
+        # Enrichir avec similarité
+        distribution, _ = _compute_distribution(results)
+        return {
+            "reference_pattern": stored["name"],
+            "matches": results,
+            "distribution": distribution,
+            "total_matches": len(results),
+        }
+
+    return await run_in_threadpool(_compare)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Utilitaires
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _compute_distribution(results):
+    if not results:
+        return (
+            {"excellent": {"label": "80–100%", "count": 0, "color": "#2ecc71"},
+             "good":      {"label": "50–79%",  "count": 0, "color": "#3498db"},
+             "low":       {"label": "<50%",     "count": 0, "color": "#f39c12"}},
+            {},
+        )
+
+    scores_list = [r["score"] for r in results]
+    min_s = min(scores_list)
+    max_s = max(scores_list)
+    rng = max_s - min_s if max_s > min_s else 1
+
+    excellent, good, low = 0, 0, 0
+    for r in results:
+        sim = 95 - ((r["score"] - min_s) / rng) * 55
+        r["similarity"] = round(sim, 1)
+        if sim >= 80:
+            excellent += 1
+        elif sim >= 50:
+            good += 1
+        else:
+            low += 1
+
+    distribution = {
+        "excellent": {"label": "80–100%", "count": excellent, "color": "#2ecc71"},
+        "good":      {"label": "50–79%",  "count": good,      "color": "#3498db"},
+        "low":       {"label": "<50%",     "count": low,       "color": "#f39c12"},
+    }
+    score_stats = {
+        "best_score":   round(min_s, 4),
+        "worst_score":  round(max_s, 4),
+        "avg_score":    round(float(np.mean(scores_list)), 4),
+        "median_score": round(float(np.median(scores_list)), 4),
+        "std_score":    round(float(np.std(scores_list)), 4),
+    }
+    return distribution, score_stats
+
+```
+
+## FICHIER : backend\api\realtime.py  (59 lignes)
+```
+from fastapi import APIRouter
+from backend.services.realtime_engine import (
+    start_simulation, stop_simulation, get_state,
+    LEVELS, ALERT_LEVELS, MATCH_THRESHOLD, PREFIX_RATIOS, EVAL_EVERY,
+)
+from backend.services import database as db
+
+router = APIRouter(prefix="/realtime", tags=["realtime"])
+
+
+@router.post("/start")
+async def start_realtime(request: dict):
+    """Demarre la simulation temps reel."""
+    dataset = request.get("dataset")
+    speed = float(request.get("speed", 0.005))
+    start_index = int(request.get("start_index", 0))
+    max_points = int(request.get("max_points", 0))
+
+    if not dataset:
+        return {"error": "Le dataset est obligatoire."}
+
+    return start_simulation(dataset, speed, start_index, max_points)
+
+
+@router.post("/stop")
+async def stop_realtime():
+    """Arrete la simulation en cours."""
+    return stop_simulation()
+
+
+@router.get("/status")
+async def get_realtime_status():
+    """Retourne l'etat courant du moteur temps reel."""
+    return get_state()
+
+
+@router.get("/events")
+async def get_realtime_events(limit: int = 100):
+    """Retourne l'historique des evenements sauvegardes en base."""
+    return {"events": db.list_realtime_events(limit)}
+
+
+@router.delete("/events")
+async def clear_events():
+    """Supprime l'historique des evenements."""
+    db.clear_realtime_events()
+    return {"message": "Historique supprime."}
+
+
+@router.get("/config")
+async def get_config():
+    """Retourne la configuration actuelle du moteur."""
+    return {
+        "levels": LEVELS,
+        "alert_levels": ALERT_LEVELS,
+        "match_threshold": MATCH_THRESHOLD,
+        "prefix_ratios": PREFIX_RATIOS,
+        "eval_every": EVAL_EVERY,
+    }
+
+```
+
+## FICHIER : backend\services\database.py  (303 lignes)
+```
+import sqlite3
+import json
+import time
+from pathlib import Path
+from passlib.context import CryptContext
+
+DB_PATH = Path(__file__).parent.parent / "patterns.db"
+
+_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def _truncate_password_to_72(s: str) -> str:
+    """Return a UTF-8 safe string whose encoded length <= 72 bytes.
+    Bcrypt (via passlib) rejects passwords longer than 72 bytes; we
+    truncate on the encoded byte length and decode with 'ignore' to
+    avoid cutting a multi-byte sequence.
+    """
+    if s is None:
+        return s
+    b = s.encode("utf-8")
+    if len(b) <= 72:
+        return s
+    return b[:72].decode("utf-8", "ignore")
+
+def _get_conn():
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
+
+def init_db():
+    conn = _get_conn()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            username      TEXT    NOT NULL UNIQUE,
+            password_hash TEXT    NOT NULL,
+            created_at    REAL    NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS patterns (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT    NOT NULL,
+            description TEXT    DEFAULT '',
+            values_json TEXT    NOT NULL,
+            dates_json  TEXT    NOT NULL,
+            stats_json  TEXT    NOT NULL,
+            match_count INTEGER DEFAULT 0,
+            pattern_type TEXT    DEFAULT 'normal',
+            alert_threshold REAL DEFAULT 55.0,
+            alert_type  TEXT    DEFAULT 'anomaly',
+            dataset     TEXT    DEFAULT '',
+            created_at  REAL    NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS realtime_events (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            pattern_id      INTEGER,
+            pattern_name    TEXT,
+            pattern_type    TEXT    DEFAULT 'normal',
+            split_index     INTEGER,
+            total_splits    INTEGER,
+            similarity      REAL,
+            confidence      TEXT    DEFAULT 'low',
+            details_json    TEXT    DEFAULT '{}',
+            created_at      REAL    NOT NULL
+        )
+    """)
+    conn.commit()
+    # Migration : ajouter colonnes si elles n'existent pas
+    try:
+        conn.execute("ALTER TABLE patterns ADD COLUMN alert_threshold REAL DEFAULT 55.0")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE patterns ADD COLUMN alert_type TEXT DEFAULT 'anomaly'")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE patterns ADD COLUMN dataset TEXT DEFAULT ''")
+    except Exception:
+        pass
+    _ensure_default_user(conn)
+    conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  AUTHENTIFICATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _ensure_default_user(conn):
+    """Crée le compte admin par défaut s'il n'existe pas."""
+    exists = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()
+    if not exists:
+        conn.execute(
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+            ("admin", _pwd_context.hash(_truncate_password_to_72("admin")), time.time()),
+        )
+        conn.commit()
+
+
+def get_user(username: str):
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT id, username, password_hash FROM users WHERE username = ?", (username,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {"id": row["id"], "username": row["username"], "password_hash": row["password_hash"]}
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    if plain is None:
+        return False
+    return _pwd_context.verify(_truncate_password_to_72(plain), hashed)
+
+
+def set_password(username: str, new_password: str):
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE users SET password_hash = ? WHERE username = ?",
+        (_pwd_context.hash(_truncate_password_to_72(new_password)), username),
+    )
+    conn.commit()
+    conn.close()
+
+
+def save_pattern(name, description, values, dates, stats, match_count, pattern_type="normal",
+                  alert_threshold=55.0, alert_type="anomaly", dataset=""):
+    conn = _get_conn()
+    cur = conn.execute(
+        """INSERT INTO patterns (name, description, values_json, dates_json,
+                                 stats_json, match_count, pattern_type, alert_threshold,
+                                 alert_type, dataset, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            name,
+            description,
+            json.dumps(values),
+            json.dumps(dates),
+            json.dumps(stats),
+            match_count,
+            pattern_type,
+            alert_threshold,
+            alert_type,
+            dataset or "",
+            time.time(),
+        ),
+    )
+    conn.commit()
+    pid = cur.lastrowid
+    conn.close()
+    return pid
+
+
+def list_patterns(dataset=None):
+    conn = _get_conn()
+    if dataset:
+        rows = conn.execute(
+            "SELECT id, name, description, stats_json, match_count, pattern_type, "
+            "alert_threshold, alert_type, dataset, created_at "
+            "FROM patterns WHERE dataset = ? ORDER BY created_at DESC",
+            (dataset,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, name, description, stats_json, match_count, pattern_type, "
+            "alert_threshold, alert_type, dataset, created_at "
+            "FROM patterns ORDER BY created_at DESC"
+        ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        result.append({
+            "id": r["id"],
+            "name": r["name"],
+            "description": r["description"],
+            "stats": json.loads(r["stats_json"]),
+            "match_count": r["match_count"],
+            "pattern_type": r["pattern_type"] or "normal",
+            "alert_threshold": r["alert_threshold"] if r["alert_threshold"] else 55.0,
+            "alert_type": r["alert_type"] or "anomaly",
+            "dataset": r["dataset"] or "",
+            "created_at": r["created_at"],
+        })
+    return result
+
+
+def get_pattern(pid):
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM patterns WHERE id = ?", (pid,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "values": json.loads(row["values_json"]),
+        "dates": json.loads(row["dates_json"]),
+        "stats": json.loads(row["stats_json"]),
+        "pattern_type": row["pattern_type"] or "normal",
+        "match_count": row["match_count"],
+        "alert_threshold": row["alert_threshold"] if row["alert_threshold"] else 55.0,
+        "alert_type": row["alert_type"] or "anomaly",
+        "dataset": row["dataset"] if "dataset" in row.keys() else "",
+        "created_at": row["created_at"],
+    }
+
+
+def update_pattern_type(pid, pattern_type):
+    """Mettre à jour le type d'un pattern (normal ou failure)"""
+    if pattern_type not in ("normal", "failure"):
+        pattern_type = "normal"
+    conn = _get_conn()
+    conn.execute("UPDATE patterns SET pattern_type = ? WHERE id = ?", (pattern_type, pid))
+    conn.commit()
+    conn.close()
+
+
+def update_pattern_threshold(pid, alert_threshold=None, alert_type=None):
+    """Mettre à jour le seuil et/ou le type d'alerte d'un pattern."""
+    conn = _get_conn()
+    if alert_threshold is not None and alert_type is not None:
+        conn.execute("UPDATE patterns SET alert_threshold = ?, alert_type = ? WHERE id = ?",
+                     (alert_threshold, alert_type, pid))
+    elif alert_threshold is not None:
+        conn.execute("UPDATE patterns SET alert_threshold = ? WHERE id = ?", (alert_threshold, pid))
+    elif alert_type is not None:
+        conn.execute("UPDATE patterns SET alert_type = ? WHERE id = ?", (alert_type, pid))
+    conn.commit()
+    conn.close()
+
+
+def delete_pattern(pid):
+    conn = _get_conn()
+    conn.execute("DELETE FROM patterns WHERE id = ?", (pid,))
+    conn.commit()
+    conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  REALTIME EVENTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def save_realtime_event(pattern_id, pattern_name, pattern_type, split_index,
+                        total_splits, similarity, confidence, details=None):
+    conn = _get_conn()
+    cur = conn.execute(
+        """INSERT INTO realtime_events
+           (pattern_id, pattern_name, pattern_type, split_index, total_splits,
+            similarity, confidence, details_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            pattern_id, pattern_name, pattern_type, split_index, total_splits,
+            similarity, confidence, json.dumps(details or {}), time.time(),
+        ),
+    )
+    conn.commit()
+    eid = cur.lastrowid
+    conn.close()
+    return eid
+
+
+def list_realtime_events(limit=100):
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM realtime_events ORDER BY created_at DESC LIMIT ?",
+        (limit,)
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            "id": r["id"],
+            "pattern_id": r["pattern_id"],
+            "pattern_name": r["pattern_name"],
+            "pattern_type": r["pattern_type"],
+            "split_index": r["split_index"],
+            "total_splits": r["total_splits"],
+            "similarity": r["similarity"],
+            "confidence": r["confidence"],
+            "details": json.loads(r["details_json"]),
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+def clear_realtime_events():
+    conn = _get_conn()
+    conn.execute("DELETE FROM realtime_events")
+    conn.commit()
+    conn.close()
+
+
+# Initialiser la DB au premier import
+init_db()
+
+```
+
+## FICHIER : backend\services\data_loader.py  (103 lignes)
+```
+import pandas as pd
+import numpy as np
+from pathlib import Path
+
+_cache = {}
+
+
+def clear_cache():
+    """Vide le cache pour forcer un rechargement des datasets."""
+    global _cache
+    _cache = {}
+
+DATASETS_DIR = Path(__file__).parent.parent / "datasets"
+
+# Chemin par défaut (rétrocompatibilité)
+CSV_PATH = DATASETS_DIR / "C2 elect kw.csv"
+
+# Paramètres de détection d'anomalies
+OUTLIER_IQR_FACTOR = 3.0  # Facteur IQR — 1.5 est trop agressif sur des données industrielles
+
+
+def list_datasets():
+    """Liste tous les fichiers CSV disponibles dans le dossier datasets."""
+    datasets = []
+    for f in sorted(DATASETS_DIR.glob("*.csv")):
+        name = f.stem
+        size_kb = round(f.stat().st_size / 1024, 1)
+        # Lire les premières lignes pour obtenir un aperçu
+        try:
+            preview = pd.read_csv(f, nrows=5)
+            rows_estimate = sum(1 for _ in open(f, encoding="utf-8")) - 1
+            cols = list(preview.columns)
+        except Exception:
+            rows_estimate = 0
+            cols = []
+        datasets.append({
+            "filename": f.name,
+            "name": name,
+            "size_kb": size_kb,
+            "rows_estimate": rows_estimate,
+            "columns": cols,
+        })
+    return datasets
+
+
+def load_dataset(filename=None):
+    global _cache
+
+    if filename is None:
+        path = CSV_PATH
+    else:
+        path = DATASETS_DIR / filename
+
+    cache_key = str(path)
+    if cache_key in _cache:
+        return _cache[cache_key]
+
+    data = pd.read_csv(path)
+
+    # conversion date — format="mixed" gère à la fois les dates sans et avec microsecondes
+    data["date"] = pd.to_datetime(data["date"], format="mixed", errors="coerce")
+
+    # conversion valeur
+    data["value"] = (
+        data["value"]
+        .astype(str)
+        .str.replace(",", ".")
+    )
+
+    data["value"] = pd.to_numeric(data["value"], errors="coerce").astype(np.float64)
+
+    # tri par date
+    data = data.sort_values("date")
+
+    # supprimer NaN
+    data = data.dropna()
+
+    data = data.set_index("date")
+
+    # Détection des outliers extrêmes (erreurs capteurs / pics anormaux)
+    Q1 = data["value"].quantile(0.25)
+    Q3 = data["value"].quantile(0.75)
+    IQR = Q3 - Q1
+
+    # Bornes asymétriques : on tolère plus les basses valeurs (arrêt machine légitime)
+    lower_bound = max(0.0, Q1 - OUTLIER_IQR_FACTOR * IQR)
+    upper_bound = Q3 + OUTLIER_IQR_FACTOR * IQR
+
+    is_outlier = (data["value"] < lower_bound) | (data["value"] > upper_bound)
+
+    if is_outlier.any():
+        # Mettre les outliers à NaN puis interpoler linéairement entre les bons voisins
+        # (beaucoup plus propre que la moyenne mobile qui est elle-même polluée par les spikes)
+        data.loc[is_outlier, "value"] = np.nan
+        data["value"] = data["value"].interpolate(method="linear", limit_direction="both")
+        # Fallback pour les bords éventuels encore NaN
+        if data["value"].isna().any():
+            data["value"] = data["value"].fillna(
+                data["value"].rolling(window=30, center=True, min_periods=1).median()
+            )
+
+    _cache[cache_key] = data
+    return _cache[cache_key]
+
+```
+
+## FICHIER : backend\services\dtw_similarity.py  (62 lignes)
+```
+import numpy as np
+import stumpy
+
+
+def z_normalize(x):
+   
+    std = np.std(x)
+    if std < 1e-10:
+        return x - np.mean(x)
+    return (x - np.mean(x)) / std
+
+
+def _get_non_overlapping_fast(distance_profile, k, exclusion_zone):
+
+    sorted_indices = np.argsort(distance_profile)
+
+    indices = []
+    blocked = np.zeros(len(distance_profile), dtype=bool)
+    unlimited = (k <= 0)
+
+    for idx in sorted_indices:
+        if not unlimited and len(indices) >= k:
+            break
+        if distance_profile[idx] == np.inf:
+            break
+        if blocked[idx]:
+            continue
+
+        indices.append(int(idx))
+
+        lo = max(0, idx - exclusion_zone)
+        hi = min(len(distance_profile), idx + exclusion_zone)
+        blocked[lo:hi] = True
+
+    return indices
+
+
+def search_pattern(series, pattern, top_k=0):
+   
+    pattern_len = len(pattern)
+    pattern_amp = float(np.max(pattern) - np.min(pattern))
+
+    diagnostics = {"total_positions": 0, "final_computed": 0}
+
+    if pattern_amp < 0.01:
+        return [], diagnostics
+
+    if pattern_len > len(series):
+        return [], diagnostics
+
+    distance_profile = stumpy.mass(pattern, series)
+    distance_profile = np.where(np.isnan(distance_profile), np.inf, distance_profile)
+
+    diagnostics["total_positions"] = len(distance_profile)
+
+    exclusion_zone = pattern_len // 2
+    top_indices = _get_non_overlapping_fast(distance_profile, top_k, exclusion_zone)
+
+    results = [{"index": i, "score": float(distance_profile[i])} for i in top_indices]
+    diagnostics["final_computed"] = len(results)
+
+    return results, diagnostics
+
+```
+
+## FICHIER : backend\services\realtime_engine.py  (687 lignes)
+```
+"""
+Moteur de detection temps reel v3 - Sliding Window Progressive Matching.
+
+Principe fondamental :
+  Au lieu de decouper le pattern en phases rigides, on compare en CONTINU
+  les dernieres donnees du flux avec des PREFIXES CROISSANTS du pattern.
+  Quand le debut du pattern commence a apparaitre dans le flux, la confiance
+  monte naturellement au fur et a mesure que le match progresse.
+
+Architecture :
+  1. DETECTION CONTINUE : A chaque evaluation, on teste des prefixes de
+     tailles 15%, 30%, 50%, 70%, 90%, 100% du pattern.
+  2. PROGRESSION NATURELLE : Le plus long prefixe qui matche bien donne
+     la progression actuelle (ex: 50% = on est a la moitie du pattern).
+  3. PREDICTION : Les points restants du pattern (apres la zone matchee)
+     representent ce qui va probablement arriver ensuite.
+  4. CONFIANCE CUMULATIVE : confiance = progression x qualite_du_match
+  5. ALERTES GRADUELLES selon la confiance.
+
+Avantages vs l'ancien systeme :
+  - Pas de state machine fragile (SEARCHING/TRACKING)
+  - Pas d'ancrage rigide qui casse au moindre decalage
+  - Detection tres precoce (des 15% du pattern visible)
+  - Prediction visuelle du futur
+  - Tolerant aux variations de vitesse (Â±30%)
+"""
+
+import threading
+import time
+import numpy as np
+import stumpy
+
+from backend.services.data_loader import load_dataset
+from backend.services import database as db
+
+# ===========================================================================
+#  CONFIGURATION
+# ===========================================================================
+
+SIMULATION_SPEED = 0.005       # Delai entre chaque point (secondes)
+EVAL_EVERY = 5                 # Evaluer toutes les N observations
+MATCH_THRESHOLD = 55.0         # Seuil de similarite minimum (%)
+
+# Prefixes a tester (fraction du pattern)
+PREFIX_RATIOS = [0.15, 0.30, 0.50, 0.70, 0.90, 1.0]
+
+# Seuils d'alerte (confiance 0-100)
+ALERT_LEVELS = {
+    "normal":       {"min": 0,  "max": 20},
+    "surveillance": {"min": 20, "max": 45},
+    "attention":    {"min": 45, "max": 65},
+    "danger":       {"min": 65, "max": 85},
+    "critique":     {"min": 85, "max": 100},
+}
+LEVELS = ["normal", "surveillance", "attention", "danger", "critique"]
+
+
+def _confidence_to_level(conf):
+    for level in reversed(LEVELS):
+        if conf >= ALERT_LEVELS[level]["min"]:
+            return level
+    return "normal"
+
+
+# ===========================================================================
+#  FONCTIONS DE SIMILARITE
+# ===========================================================================
+
+def _znorm_similarity(query, segment):
+    """
+    Similarite basee sur la distance z-normalisee (MASS).
+    Retourne un score 0-100 (100 = identique).
+    """
+    n = len(query)
+    if n < 4 or len(segment) < n:
+        return 0.0, -1
+
+    try:
+        # MASS calcule le profil de distance pour chaque position
+        dist_profile = stumpy.mass(query, segment)
+        best_idx = int(np.nanargmin(dist_profile))
+        best_dist = float(dist_profile[best_idx])
+
+        # Normaliser : distance max theorique = sqrt(2*n) pour des series z-norm
+        max_dist = np.sqrt(2.0 * n)
+        similarity = max(0.0, min(100.0, (1.0 - best_dist / max_dist) * 100.0))
+
+        return similarity, best_idx
+    except Exception:
+        return 0.0, -1
+
+
+def _pearson_similarity(query, segment):
+    """
+    Fallback : correlation de Pearson pour petits segments.
+    Retourne un score 0-100.
+    """
+    if len(query) < 4 or len(segment) < len(query):
+        return 0.0
+
+    seg = segment[:len(query)]
+    std_q = np.std(query)
+    std_s = np.std(seg)
+
+    if std_q < 1e-6 and std_s < 1e-6:
+        return 100.0
+    if std_q < 1e-6 or std_s < 1e-6:
+        return 0.0
+
+    q_norm = (query - np.mean(query)) / std_q
+    s_norm = (seg - np.mean(seg)) / std_s
+    corr = float(np.dot(q_norm, s_norm) / len(q_norm))
+    return max(0.0, min(100.0, (corr + 1.0) * 50.0))
+
+
+# ===========================================================================
+#  DETECTEUR PAR PATTERN (Sliding Progressive Matcher)
+# ===========================================================================
+
+class PatternDetector:
+    """
+    Detecteur temps reel pour un pattern de reference.
+
+    A chaque evaluation :
+    1. Teste des prefixes croissants du pattern contre le buffer
+    2. Identifie le plus long prefixe qui matche bien
+    3. Calcule confiance = progression x score
+    4. Genere une prediction (suite attendue du pattern)
+    """
+
+    def __init__(self, pattern_id, name, pattern_type, values,
+                 alert_threshold=MATCH_THRESHOLD, alert_type="failure"):
+        self.pattern_id = pattern_id
+        self.name = name
+        self.pattern_type = pattern_type
+        self.values = np.array(values, dtype=np.float64)
+        self.m = len(values)
+
+        self.alert_threshold = alert_threshold
+        self.alert_type = alert_type
+
+        # Prefixes pre-calcules
+        self.prefixes = []
+        for ratio in PREFIX_RATIOS:
+            length = max(20, int(self.m * ratio))
+            length = min(length, self.m)
+            self.prefixes.append({
+                "ratio": ratio,
+                "length": length,
+                "values": self.values[:length],
+            })
+
+        # Etat de detection
+        self.progress = 0.0           # 0-1 (fraction du pattern matchee)
+        self.best_similarity = 0.0    # Score du meilleur match actuel (0-100)
+        self.confidence = 0.0         # confidence = progress * similarity (0-100)
+        self.alert_level = "normal"
+        self.match_position = -1      # Position du match dans le buffer
+        self.matched_length = 0       # Nombre de points actuellement matches
+
+        # Prediction
+        self.prediction = []          # Points futurs predits
+        self.prediction_offset = 0    # Decalage par rapport au buffer actuel
+
+        # Scores par prefixe (pour visualisation)
+        self.prefix_scores = [0.0] * len(PREFIX_RATIOS)
+
+        # Historique de confiance
+        self.history = []
+        self.max_history = 500
+
+        # Compteur de stabilite (evite les faux positifs)
+        self.stable_count = 0
+        self.min_stable = 2  # Confirmations avant de monter le niveau
+
+        # Alarme : logique inversee selon le type
+        # failure: alarm quand similarite HAUTE (on detecte la panne)
+        # normal:  alarm quand similarite BASSE (on s'eloigne du normal)
+        self.alarm_confidence = 0.0   # Confiance d'alarme effective (0-100)
+        self.alarm_triggered = False   # Seuil d'alarme atteint
+
+        # Meilleur match historique de cette session
+        self.peak_confidence = 0.0
+        self.peak_progress = 0.0
+        self.detections_count = 0     # Nombre de detections completes
+        self.last_detection_buf_len = 0  # Cooldown inter-detections (evite double-comptage)
+        self.matched_segment = []         # Segment du buffer correspondant au meilleur match
+
+    def evaluate(self, buffer):
+        """
+        Evalue le buffer et met a jour l'etat de detection.
+        Retourne un evenement si le niveau d'alerte change significativement.
+        """
+        buf = np.array(buffer, dtype=np.float64)
+        now = time.time()
+        event = None
+
+        # Zone de recherche = les derniers 2x pattern_length points
+        search_len = min(len(buf), int(self.m * 2.5))
+        if search_len < self.prefixes[0]["length"]:
+            self._record(now)
+            return None
+
+        search_buf = buf[-search_len:]
+
+        # --- Tester chaque prefixe du plus long au plus court ---
+        best_progress = 0.0
+        best_sim = 0.0
+        best_pos = -1
+        best_matched_len = 0
+
+        for i in range(len(self.prefixes) - 1, -1, -1):
+            prefix = self.prefixes[i]
+            plen = prefix["length"]
+
+            if len(search_buf) < plen + 3:
+                self.prefix_scores[i] = 0.0
+                continue
+
+            sim, pos = _znorm_similarity(prefix["values"], search_buf)
+            self.prefix_scores[i] = round(sim, 1)
+
+            # Si ce prefixe matche bien ET c'est plus long que le meilleur actuel
+            if sim >= self.alert_threshold and plen > best_matched_len:
+                best_progress = prefix["ratio"]
+                best_sim = sim
+                best_pos = pos
+                best_matched_len = plen
+
+        # Si aucun prefixe long ne matche, essayer les plus courts
+        if best_matched_len == 0:
+            for i, prefix in enumerate(self.prefixes):
+                if self.prefix_scores[i] >= self.alert_threshold:
+                    best_progress = prefix["ratio"]
+                    best_sim = self.prefix_scores[i]
+                    best_matched_len = prefix["length"]
+                    # Position from previous MASS call
+                    if len(search_buf) >= prefix["length"] + 3:
+                        _, pos = _znorm_similarity(prefix["values"], search_buf)
+                        best_pos = pos
+                    break
+
+        # --- Mettre a jour l'etat ---
+        prev_confidence = self.confidence
+        prev_alarm_conf = self.alarm_confidence
+        prev_level = self.alert_level
+
+        if best_matched_len > 0:
+            self.progress = best_progress
+            self.best_similarity = best_sim
+            # Confiance = progression ponderee par la qualite du match
+            # On utilise une courbe qui accelere quand on avance
+            weight = best_progress ** 0.7  # LÃ©gÃ¨rement non-lineaire
+            self.confidence = round(min(100.0, weight * (best_sim / 100.0) * 100.0), 1)
+            self.match_position = best_pos
+            self.matched_length = best_matched_len
+            # Stocker le segment reel du buffer pour visualisation
+            self.matched_segment = list(search_buf[best_pos:best_pos + best_matched_len])
+
+            # Generer la prediction (points restants du pattern)
+            remaining_start = best_matched_len
+            if remaining_start < self.m:
+                self.prediction = list(self.values[remaining_start:])
+                self.prediction_offset = best_pos + best_matched_len
+            else:
+                self.prediction = []
+                self.prediction_offset = 0
+
+            # Stabilite (pour failure: match = stable alarm, pour normal: match = stable OK)
+            if self.pattern_type == "normal":
+                # Normal: quand on matche, on est stable en mode OK (baisser stable_count)
+                self.stable_count = max(0, self.stable_count - 1)
+            else:
+                # Failure: quand on matche, on est stable en mode alarme
+                self.stable_count = min(self.stable_count + 1, 10)
+
+            # Peak tracking
+            if self.confidence > self.peak_confidence:
+                self.peak_confidence = self.confidence
+                self.peak_progress = self.progress
+
+            # Detection complete (pour failure: pattern complet detecte)
+            # Cooldown = 50% de la longueur du pattern pour eviter de compter
+            # plusieurs fois la meme occurrence
+            if self.pattern_type != "normal":
+                if best_progress >= 0.9 and best_sim >= self.alert_threshold:
+                    buf_len = len(buf)
+                    if buf_len - self.last_detection_buf_len >= int(self.m * 0.5):
+                        self.detections_count += 1
+                        self.last_detection_buf_len = buf_len
+        else:
+            # Pas de match - decroissance douce
+            self.confidence = round(max(0.0, self.confidence * 0.7), 1)
+            self.progress = max(0.0, self.progress * 0.5)
+            self.best_similarity = max(0.0, self.best_similarity * 0.6)
+            self.matched_length = 0
+            self.prediction = []
+            self.matched_segment = []
+
+            if self.pattern_type == "normal":
+                # Normal: pas de match = anomalie, augmenter stable_count pour alarme
+                self.stable_count = min(self.stable_count + 1, 10)
+            else:
+                # Failure: pas de match = tout va bien
+                self.stable_count = max(0, self.stable_count - 1)
+
+            # Pour normal: non-match = anomalie detectee
+            if self.pattern_type == "normal":
+                if self.alarm_confidence >= 70 and prev_alarm_conf < 70:
+                    self.detections_count += 1
+
+        # --- Calcul de l'alarm_confidence selon le type de pattern ---
+        if self.pattern_type == "normal":
+            # Pattern NORMAL : alarme quand on NE matche PAS le pattern
+            # Plus la similarite est basse, plus l'alarme est haute
+            if best_matched_len > 0:
+                # On matche le pattern normal => tout va bien
+                self.alarm_confidence = round(max(0.0, 100.0 - self.confidence), 1)
+            else:
+                # Pas de match du pattern normal => deviation detectee
+                self.alarm_confidence = round(min(100.0, self.alarm_confidence * 0.9 + 10.0), 1)
+            self.alarm_triggered = bool(self.alarm_confidence >= 50.0)
+        else:
+            # Pattern FAILURE/PANNE : alarme quand on MATCHE le pattern
+            self.alarm_confidence = self.confidence
+            self.alarm_triggered = bool(self.confidence >= 50.0 and
+                                        self.best_similarity >= self.alert_threshold)
+
+        # Niveau d'alerte base sur alarm_confidence (pas confidence brute)
+        raw_level = _confidence_to_level(self.alarm_confidence)
+        if LEVELS.index(raw_level) > LEVELS.index(self.alert_level):
+            # Monter => besoin de stabilite
+            if self.stable_count >= self.min_stable:
+                self.alert_level = raw_level
+        elif LEVELS.index(raw_level) < LEVELS.index(self.alert_level):
+            # Descendre => immediat mais pas trop brutal
+            current_idx = LEVELS.index(self.alert_level)
+            target_idx = LEVELS.index(raw_level)
+            # Descendre d'un cran a la fois
+            self.alert_level = LEVELS[max(target_idx, current_idx - 1)]
+
+        # Generer un evenement si changement notable
+        if self.alert_level != prev_level:
+            event = {
+                "type": "level_change",
+                "pattern_id": self.pattern_id,
+                "pattern_name": self.name,
+                "pattern_type": self.pattern_type,
+                "from_level": prev_level,
+                "to_level": self.alert_level,
+                "confidence": self.alarm_confidence,
+                "progress": round(self.progress * 100, 1),
+                "similarity": round(self.best_similarity, 1),
+                "alarm_triggered": self.alarm_triggered,
+                "timestamp": now,
+            }
+        elif (self.alarm_confidence >= 75 and prev_alarm_conf < 75):
+            # Alerte haute atteinte
+            event = {
+                "type": "high_confidence",
+                "pattern_id": self.pattern_id,
+                "pattern_name": self.name,
+                "pattern_type": self.pattern_type,
+                "confidence": self.alarm_confidence,
+                "progress": round(self.progress * 100, 1),
+                "similarity": round(self.best_similarity, 1),
+                "alert_level": self.alert_level,
+                "alarm_triggered": self.alarm_triggered,
+                "timestamp": now,
+            }
+
+        self._record(now)
+        return event
+
+    def _record(self, now):
+        self.history.append((now, self.confidence, self.progress))
+        if len(self.history) > self.max_history:
+            self.history = self.history[-self.max_history:]
+
+    def get_eta(self, points_per_second):
+        """Estime le temps restant avant completion."""
+        if self.progress <= 0 or self.progress >= 1.0:
+            return None, None
+
+        remaining_points = int(self.m * (1.0 - self.progress))
+        if points_per_second > 0:
+            remaining_sec = round(remaining_points / points_per_second, 1)
+        else:
+            remaining_sec = None
+        return remaining_sec, remaining_points
+
+    def to_dict(self, buffer_len=0, points_per_second=1.0):
+        """Serialise l'etat pour l'API."""
+        eta_sec, eta_pts = self.get_eta(points_per_second)
+
+        return {
+            "pattern_id": self.pattern_id,
+            "name": self.name,
+            "pattern_type": self.pattern_type,
+            "alert_threshold": self.alert_threshold,
+            "pattern_length": self.m,
+            # Detection
+            "progress": round(self.progress * 100, 1),
+            "similarity": round(self.best_similarity, 1),
+            "confidence": self.confidence,
+            "alarm_confidence": self.alarm_confidence,
+            "alarm_triggered": self.alarm_triggered,
+            "alert_level": self.alert_level,
+            "matched_length": self.matched_length,
+            "match_position": self.match_position,
+            # Scores detailles par prefixe
+            "prefix_scores": list(self.prefix_scores),
+            "prefix_ratios": [p["ratio"] for p in self.prefixes],
+            # Prediction
+            "prediction": self.prediction[:200],  # Max 200 pts pour transfert
+            "prediction_offset": self.prediction_offset,
+            # Estimation
+            "eta_seconds": eta_sec,
+            "eta_points": eta_pts,
+            # Stats
+            "peak_confidence": self.peak_confidence,
+            "peak_progress": round(self.peak_progress * 100, 1),
+            "detections_count": self.detections_count,
+            "stable_count": self.stable_count,
+            # Historique
+            "history": [(h[0], h[1], round(h[2] * 100, 1)) for h in self.history[-200:]],
+            # Donnees pattern (pour overlay)
+            "pattern_data": list(self.values),
+            # Segment du buffer correspondant au meilleur match (pour comparaison visuelle)
+            "matched_segment": self.matched_segment[:500],
+        }
+
+
+# ===========================================================================
+#  ETAT GLOBAL DU MOTEUR
+# ===========================================================================
+
+_state = {
+    "running": False,
+    "thread": None,
+    "buffer": [],
+    "total_points": 0,
+    "detectors": [],
+    "events": [],
+    "dataset": None,
+    "speed": SIMULATION_SPEED,
+    "sim_progress": 0.0,
+    "sim_total": 0,
+    "points_per_second": 0.0,
+    "eval_count": 0,
+    "is_comparing": False,
+}
+
+_lock = threading.Lock()
+
+
+def get_state():
+    """Retourne l'etat complet du moteur (thread-safe)."""
+    with _lock:
+        buf = list(_state["buffer"])
+        pps = _state["points_per_second"]
+        detectors_data = [d.to_dict(buffer_len=len(buf), points_per_second=pps)
+                          for d in _state["detectors"]]
+
+        # Niveau global = le plus eleve (base sur alarm_confidence)
+        if detectors_data:
+            max_idx = max(LEVELS.index(d["alert_level"]) for d in detectors_data)
+            global_level = LEVELS[max_idx]
+            max_conf = max(d["alarm_confidence"] for d in detectors_data)
+        else:
+            global_level = "normal"
+            max_conf = 0.0
+
+        return {
+            "running": _state["running"],
+            "total_points": _state["total_points"],
+            "buffer_size": len(buf),
+            "buffer_data": buf[-2000:],
+            "detectors": detectors_data,
+            "active_count": len(_state["detectors"]),
+            "events": _state["events"][-50:],
+            "dataset": _state["dataset"],
+            "speed": _state["speed"],
+            "sim_progress": _state["sim_progress"],
+            "global_level": global_level,
+            "global_confidence": round(max_conf, 1),
+            "points_per_second": pps,
+            "eval_count": _state["eval_count"],
+            "is_comparing": _state["is_comparing"],
+            "config": {
+                "eval_every": EVAL_EVERY,
+                "match_threshold": MATCH_THRESHOLD,
+                "prefix_ratios": PREFIX_RATIOS,
+                "alert_levels": ALERT_LEVELS,
+            },
+        }
+
+
+# ===========================================================================
+#  BOUCLE DE SIMULATION
+# ===========================================================================
+
+def _run_simulation(dataset_filename, speed, start_index=0, max_points=0):
+    """Boucle principale : simule un flux point par point."""
+    global _state
+
+    # Charger les donnees
+    data = load_dataset(dataset_filename)
+    series = data["value"].values
+    total = len(series) if max_points <= 0 else min(max_points, len(series))
+
+    with _lock:
+        _state["sim_total"] = total
+        _state["dataset"] = dataset_filename
+
+    # Charger les patterns de reference
+    all_patterns = db.list_patterns(dataset=dataset_filename)
+    detectors = []
+    max_pat_len = 0
+
+    for p in all_patterns:
+        full = db.get_pattern(p["id"])
+        if full and full.get("values") and len(full["values"]) >= 20:
+            d = PatternDetector(
+                pattern_id=full["id"],
+                name=full["name"],
+                pattern_type=full.get("pattern_type", "normal"),
+                values=full["values"],
+                alert_threshold=full.get("alert_threshold", MATCH_THRESHOLD),
+                alert_type=full.get("alert_type", "failure"),
+            )
+            detectors.append(d)
+            max_pat_len = max(max_pat_len, len(full["values"]))
+
+    with _lock:
+        _state["detectors"] = detectors
+
+    if not detectors:
+        with _lock:
+            _state["running"] = False
+            _state["events"].append({
+                "type": "error",
+                "message": f"Aucun pattern trouve pour '{dataset_filename}'. "
+                           "Sauvegardez des patterns depuis l'onglet Analyse.",
+                "timestamp": time.time(),
+            })
+        return
+
+    # Buffer
+    buffer_capacity = int(max_pat_len * 3)
+    buffer = []
+    eval_counter = 0
+    points_per_second = 1.0 / speed if speed > 0 else 200.0
+
+    with _lock:
+        _state["points_per_second"] = points_per_second
+        _state["events"].append({
+            "type": "start",
+            "message": (f"Simulation demarree - {len(detectors)} pattern(s), "
+                        f"eval chaque {EVAL_EVERY} pts, seuil {MATCH_THRESHOLD}%"),
+            "timestamp": time.time(),
+        })
+
+    # Boucle point par point
+    for i in range(start_index, start_index + total):
+        with _lock:
+            if not _state["running"]:
+                break
+
+        value = float(series[i])
+        buffer.append(value)
+        if len(buffer) > buffer_capacity:
+            buffer = buffer[-buffer_capacity:]
+
+        eval_counter += 1
+
+        with _lock:
+            _state["buffer"] = list(buffer)
+            _state["total_points"] = i - start_index + 1
+            _state["sim_progress"] = round(
+                ((i - start_index + 1) / total) * 100, 1)
+
+        # Evaluation periodique
+        if eval_counter >= EVAL_EVERY and len(buffer) >= 30:
+            eval_counter = 0
+
+            with _lock:
+                _state["eval_count"] += 1
+                _state["is_comparing"] = True
+
+            for detector in detectors:
+                prev_detections = detector.detections_count
+                event = detector.evaluate(buffer)
+
+                # Nouveau match complet detecte
+                if detector.detections_count > prev_detections:
+                    new_match_event = {
+                        "type": "new_match",
+                        "pattern_id": detector.pattern_id,
+                        "pattern_name": detector.name,
+                        "pattern_type": detector.pattern_type,
+                        "confidence": round(detector.confidence, 1),
+                        "similarity": round(detector.best_similarity, 1),
+                        "progress": round(detector.progress * 100, 1),
+                        "detections_count": detector.detections_count,
+                        "timestamp": time.time(),
+                    }
+                    with _lock:
+                        _state["events"].append(new_match_event)
+
+                if event:
+                    with _lock:
+                        _state["events"].append(event)
+
+                    # Sauvegarder les evenements importants en DB
+                    if event["type"] in ("high_confidence", "level_change"):
+                        db.save_realtime_event(
+                            pattern_id=detector.pattern_id,
+                            pattern_name=detector.name,
+                            pattern_type=detector.pattern_type,
+                            split_index=int(detector.progress * 100),
+                            total_splits=100,
+                            similarity=event.get("similarity", 0),
+                            confidence=event.get("alert_level", event.get("to_level", "normal")),
+                            details={
+                                "confidence": event.get("confidence", 0),
+                                "progress": event.get("progress", 0),
+                            },
+                        )
+
+            with _lock:
+                _state["is_comparing"] = False
+
+        time.sleep(speed)
+
+    # Fin
+    total_matches = sum(d.detections_count for d in detectors)
+    with _lock:
+        _state["running"] = False
+        _state["is_comparing"] = False
+        _state["events"].append({
+            "type": "end",
+            "message": f"Simulation terminee. {total_matches} correspondance(s) detectee(s) sur {len(detectors)} pattern(s).",
+            "total_matches": total_matches,
+            "patterns_count": len(detectors),
+            "timestamp": time.time(),
+        })
+
+
+# ===========================================================================
+#  CONTROLE PUBLIC
+# ===========================================================================
+
+def start_simulation(dataset_filename, speed=SIMULATION_SPEED,
+                     start_index=0, max_points=0):
+    with _lock:
+        if _state["running"]:
+            return {"error": "Simulation deja en cours."}
+        _state["running"] = True
+        _state["buffer"] = []
+        _state["total_points"] = 0
+        _state["detectors"] = []
+        _state["events"] = []
+        _state["sim_progress"] = 0.0
+        _state["speed"] = speed
+        _state["eval_count"] = 0
+        _state["is_comparing"] = False
+
+    thread = threading.Thread(
+        target=_run_simulation,
+        args=(dataset_filename, speed, start_index, max_points),
+        daemon=True,
+    )
+    thread.start()
+
+    with _lock:
+        _state["thread"] = thread
+
+    return {"message": "Simulation demarree."}
+
+
+def stop_simulation():
+    with _lock:
+        if not _state["running"]:
+            return {"message": "Aucune simulation en cours."}
+        _state["running"] = False
+    return {"message": "Simulation arretee."}
+
+```
+
+## FICHIER : frontend\src\api\api.js  (149 lignes)
+```
+import axios from "axios"
+
+const API = axios.create({
+  baseURL: "http://127.0.0.1:8000"
+})
+
+// ─── Intercepteur : injecte le token JWT dans chaque requête ──────────────────
+API.interceptors.request.use((config) => {
+  const token = localStorage.getItem("auth_token")
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+// ─── Intercepteur : redirige vers login si 401 ───────────────────────────────
+API.interceptors.response.use(
+  (res) => res,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem("auth_token")
+      localStorage.removeItem("auth_username")
+      window.dispatchEvent(new Event("auth:logout"))
+    }
+    return Promise.reject(error)
+  }
+)
+
+// ═══ Authentification ══════════════════════════════════════════════════════════
+export const login = async (username, password) => {
+  const res = await API.post("/auth/login", { username, password })
+  return res.data
+}
+
+export const changePassword = async (currentPassword, newPassword, confirmPassword) => {
+  const res = await API.post("/auth/change-password", {
+    current_password: currentPassword,
+    new_password: newPassword,
+    confirm_password: confirmPassword,
+  })
+  return res.data
+}
+
+// ═══ Datasets ══════════════════════════════════════════════════════════════════
+export const fetchDatasets = async () => {
+  const res = await API.get("/datasets")
+  return res.data.datasets
+}
+
+// ═══ Données ═══════════════════════════════════════════════════════════════════
+export const fetchData = async (period = "month", offset = 0, dataset = null, startDate = null, endDate = null) => {
+  const params = { period, offset }
+  if (dataset) params.dataset = dataset
+  if (period === "custom" && startDate && endDate) {
+    params.start = startDate
+    params.end = endDate
+  }
+  const res = await API.get("/data", { params })
+  return res.data
+}
+
+export const fetchDataRange = async (dataset = null) => {
+  const params = {}
+  if (dataset) params.dataset = dataset
+  const res = await API.get("/data/range", { params })
+  return res.data
+}
+
+// ═══ Analyse ═══════════════════════════════════════════════════════════════════
+export const detectPattern = async (start, end, topK = 0, dataset = null) => {
+  const body = { start, end, top_k: topK }
+  if (dataset) body.dataset = dataset
+  const res = await API.post("/pattern", body)
+  return res.data
+}
+
+export const computeAllScores = async (start, end, nSubseq = 1000, dataset = null) => {
+  const body = { start, end, n_subseq: nSubseq }
+  if (dataset) body.dataset = dataset
+  const res = await API.post("/scores", body)
+  return res.data
+}
+
+// ═══ Bibliothèque de patterns ══════════════════════════════════════════════════
+export const savePattern = async (start, end, name, description, matchCount, distribution, patternType = "normal", alertThreshold = 55.0, alertType = "anomaly", dataset = null) => {
+  const body = {
+    start, end, name, description, match_count: matchCount,
+    distribution: distribution || null, pattern_type: patternType,
+    alert_threshold: alertThreshold, alert_type: alertType
+  }
+  if (dataset) body.dataset = dataset
+  const res = await API.post("/patterns/save", body)
+  return res.data
+}
+
+export const updatePattern = async (id, updates) => {
+  const res = await API.put(`/patterns/${id}`, updates)
+  return res.data
+}
+
+export const listPatterns = async (dataset = null) => {
+  const params = {}
+  if (dataset) params.dataset = dataset
+  const res = await API.get("/patterns", { params })
+  return res.data
+}
+
+export const getPattern = async (id) => {
+  const res = await API.get(`/patterns/${id}`)
+  return res.data
+}
+
+export const deletePattern = async (id) => {
+  const res = await API.delete(`/patterns/${id}`)
+  return res.data
+}
+
+export const comparePattern = async (id, start, end, dataset = null) => {
+  const body = { start, end }
+  if (dataset) body.dataset = dataset
+  const res = await API.post(`/patterns/${id}/compare`, body)
+  return res.data
+}
+
+// ═══ Temps Réel ════════════════════════════════════════════════════════════════
+export const startRealtime = async (dataset, speed = 0.005, startIndex = 0, maxPoints = 0) => {
+  const res = await API.post("/realtime/start", {
+    dataset, speed, start_index: startIndex, max_points: maxPoints
+  })
+  return res.data
+}
+
+export const stopRealtime = async () => {
+  const res = await API.post("/realtime/stop")
+  return res.data
+}
+
+export const getRealtimeStatus = async () => {
+  const res = await API.get("/realtime/status")
+  return res.data
+}
+
+export const getRealtimeEvents = async (limit = 100) => {
+  const res = await API.get("/realtime/events", { params: { limit } })
+  return res.data
+}
+
+export const clearRealtimeEvents = async () => {
+  const res = await API.delete("/realtime/events")
+  return res.data
+}
+
+```
+
+## FICHIER : frontend\src\utils\generateRealtimeReport.js  (317 lignes)
+```
+import jsPDF from "jspdf"
+import autoTable from "jspdf-autotable"
+
+const C = {
+  primary: [79,  70,  229],
+  danger:  [220, 38,  38 ],
+  warning: [217, 119, 6  ],
+  success: [5,   150, 105],
+  info:    [37,  99,  235],
+  muted:   [100, 116, 139],
+  text:    [15,  23,  42 ],
+  border:  [226, 232, 240],
+  white:   [255, 255, 255],
+  bgLight: [248, 250, 252],
+  bgCard:  [30,  41,  59 ],
+}
+
+const LEVEL_META = {
+  normal:       { label: "Normal",       color: C.success },
+  surveillance: { label: "Surveillance", color: C.info    },
+  attention:    { label: "Attention",    color: C.warning },
+  danger:       { label: "Danger",       color: [239, 68, 68] },
+  critique:     { label: "Critique",     color: C.danger  },
+}
+const LEVELS_ORDER = ["normal", "surveillance", "attention", "danger", "critique"]
+
+function getHighestLevel(detectors) {
+  let best = 0
+  detectors.forEach(d => {
+    const i = LEVELS_ORDER.indexOf(d.alert_level || "normal")
+    if (i > best) best = i
+  })
+  return LEVELS_ORDER[best]
+}
+
+function fmtNum(n, d = 1) { return n == null ? "-" : Number(n).toFixed(d) }
+
+function setFont(doc, size, style, color) {
+  if (!style) style = "normal"
+  if (!color) color = C.text
+  doc.setFontSize(size); doc.setFont("helvetica", style); doc.setTextColor(...color)
+}
+function fillRect(doc, x, y, w, h, color) {
+  doc.setFillColor(...color); doc.rect(x, y, w, h, "F")
+}
+
+/**
+ * @param {object}   status    - full realtime status from API
+ * @param {string}   dataset   - dataset filename
+ * @param {Array}    snapshots - [{ timestamp, patternName, confidence, level, imageData }]
+ */
+export function generateRealtimeReport(status, dataset, snapshots) {
+  if (!snapshots) snapshots = []
+  const doc   = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" })
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const M     = 18
+  const CW    = pageW - M * 2
+  const now   = new Date()
+  let y       = 0
+
+  const checkPage = function(need) {
+    if (!need) need = 40
+    if (y + need > pageH - 18) { doc.addPage(); y = 20 }
+  }
+
+  const detectors    = (status && status.detectors) ? status.detectors : []
+  const events       = (status && status.events)    ? status.events    : []
+  const totalAlerts  = detectors.reduce(function(s, d) { return s + (d.detections_count || 0) }, 0)
+  const highestLevel = getHighestLevel(detectors)
+  const levelMeta    = LEVEL_META[highestLevel] || LEVEL_META.normal
+  const isAnomaly    = totalAlerts > 0 || highestLevel === "danger" || highestLevel === "critique"
+  const anomalyEvents = events.filter(function(e) {
+    return e.type === "new_match" ||
+      (e.type === "level_change" && (e.to_level === "danger" || e.to_level === "critique"))
+  })
+
+  // --- HEADER ---
+  fillRect(doc, 0, 0, pageW, 30, C.primary)
+  fillRect(doc, 0, 0, 4, 30, isAnomaly ? C.danger : C.success)
+  setFont(doc, 7, "normal", [199, 210, 254])
+  doc.text("RAPPORT DE SURVEILLANCE INDUSTRIELLE", M + 2, 9)
+  setFont(doc, 17, "bold", C.white)
+  doc.text("Analyse des anomalies", M + 2, 22)
+  setFont(doc, 8, "normal", [199, 210, 254])
+  const ds = now.toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })
+  doc.text(ds, pageW - M - doc.getTextWidth(ds), 22)
+
+  y = 38
+
+  setFont(doc, 8.5, "normal", C.muted)
+  const dsName = (dataset || "-").replace(/[^\x00-\x7F]/g, "?")
+  doc.text("Jeu de donnees : " + dsName + "   -   Genere le " + now.toLocaleString("fr-FR"), M, y)
+  y += 10
+
+  // --- KPI BOXES ---
+  const kpiBoxH = 28
+  const kpiBoxW = (CW - 9) / 4
+  const kpis = [
+    {
+      label: "ANOMALIES DETECTEES",
+      value: String(totalAlerts),
+      color: totalAlerts > 0 ? C.danger : C.success,
+      bg:    totalAlerts > 0 ? [254,242,242] : [240,253,250],
+    },
+    {
+      label: "PATTERNS SURVEILLES",
+      value: String(detectors.length),
+      color: C.primary,
+      bg:    [238, 242, 255],
+    },
+    {
+      label: "NIVEAU D'ALERTE MAX",
+      value: levelMeta.label,
+      color: levelMeta.color,
+      bg:    [248, 250, 252],
+    },
+    {
+      label: "POINTS ANALYSES",
+      value: ((status && status.total_points) ? status.total_points : 0).toLocaleString("fr-FR"),
+      color: C.info,
+      bg:    [239, 246, 255],
+    },
+  ]
+
+  kpis.forEach(function(k, i) {
+    const bx = M + i * (kpiBoxW + 3)
+    const by = y
+    fillRect(doc, bx, by, kpiBoxW, kpiBoxH, k.bg)
+    doc.setDrawColor(...k.color); doc.setLineWidth(2.5)
+    doc.line(bx, by, bx + kpiBoxW, by)
+    doc.setLineWidth(0.25); doc.rect(bx, by, kpiBoxW, kpiBoxH)
+    setFont(doc, 7, "bold", k.color)
+    doc.text(k.label, bx + 4, by + 8)
+    setFont(doc, 16, "bold", k.color)
+    doc.text(k.value, bx + 4, by + 22)
+  })
+  y += kpiBoxH + 8
+
+  // --- STATUS BANNER ---
+  const bannerBg    = isAnomaly ? [254,242,242] : [240,253,250]
+  const bannerColor = isAnomaly ? C.danger      : C.success
+  fillRect(doc, M, y, CW, 13, bannerBg)
+  doc.setDrawColor(...bannerColor); doc.setLineWidth(3)
+  doc.line(M, y, M, y + 13)
+  doc.setLineWidth(0.2); doc.rect(M, y, CW, 13)
+  setFont(doc, 9.5, "bold", bannerColor)
+  const bannerTxt = isAnomaly
+    ? String(totalAlerts) + " anomalie(s) detectee(s) sur " + String(detectors.length) + " pattern(s) surveille(s)"
+    : "Aucune anomalie detectee - comportement normal sur toute la plage analysee"
+  doc.text(bannerTxt, M + 7, y + 8.5)
+  y += 20
+
+  // --- RESUME PAR PATTERN ---
+  if (detectors.length > 0) {
+    checkPage(50)
+    fillRect(doc, M, y, CW, 8, [238, 242, 255])
+    setFont(doc, 9, "bold", C.primary)
+    doc.text("RESUME PAR PATTERN", M + 4, y + 5.5)
+    y += 12
+
+    autoTable(doc, {
+      startY: y,
+      margin: { left: M, right: M },
+      styles: {
+        fontSize: 9, font: "helvetica",
+        cellPadding: { top: 4, bottom: 4, left: 5, right: 5 },
+        textColor: C.text, lineColor: C.border, lineWidth: 0.2,
+      },
+      headStyles: { fillColor: C.primary, textColor: C.white, fontStyle: "bold", fontSize: 8.5 },
+      alternateRowStyles: { fillColor: C.bgLight },
+      columnStyles: {
+        0: { cellWidth: 58 },
+        1: { cellWidth: 24, halign: "center" },
+        2: { cellWidth: 34, halign: "center" },
+        3: { cellWidth: 20, halign: "center" },
+        4: { cellWidth: "auto", halign: "center" },
+      },
+      head: [["Nom du pattern", "Type", "Niveau alerte", "Alertes", "Statut"]],
+      body: detectors.map(function(d) {
+        return [
+          d.name || "-",
+          d.pattern_type === "failure" ? "Panne" : "Normal",
+          (LEVEL_META[d.alert_level] || LEVEL_META.normal).label,
+          String(d.detections_count || 0),
+          d.alarm_triggered ? "ALARME" : (d.detections_count > 0 ? "Alerte" : "OK"),
+        ]
+      }),
+      didDrawCell: function(data) {
+        if (data.section !== "body") return
+        const det = detectors[data.row.index]
+        if (data.column.index === 2) {
+          const lm = LEVEL_META[det && det.alert_level] || LEVEL_META.normal
+          doc.setFillColor(...lm.color)
+          doc.roundedRect(data.cell.x + 3, data.cell.y + 2, data.cell.width - 6, data.cell.height - 4, 2, 2, "F")
+          doc.setTextColor(255, 255, 255); doc.setFontSize(8); doc.setFont("helvetica", "bold")
+          const t = lm.label
+          doc.text(t, data.cell.x + (data.cell.width - doc.getTextWidth(t)) / 2, data.cell.y + data.cell.height / 2 + 1.5)
+          return false
+        }
+        if (data.column.index === 4) {
+          const alarm = det && det.alarm_triggered
+          const alert = (det && det.detections_count || 0) > 0
+          const c = alarm ? C.danger : alert ? [217,119,6] : C.success
+          const bg = alarm ? [254,242,242] : alert ? [255,251,235] : [240,253,250]
+          doc.setFillColor(...bg)
+          doc.roundedRect(data.cell.x + 3, data.cell.y + 2, data.cell.width - 6, data.cell.height - 4, 2, 2, "F")
+          doc.setTextColor(...c); doc.setFontSize(8.5); doc.setFont("helvetica", "bold")
+          const t = alarm ? "ALARME" : alert ? "Alerte" : "OK"
+          doc.text(t, data.cell.x + (data.cell.width - doc.getTextWidth(t)) / 2, data.cell.y + data.cell.height / 2 + 1.5)
+          return false
+        }
+      },
+    })
+    y = doc.lastAutoTable.finalY + 12
+  }
+
+  // --- EVENEMENTS D'ANOMALIE ---
+  if (anomalyEvents.length > 0) {
+    checkPage(50)
+    fillRect(doc, M, y, CW, 8, [254, 242, 242])
+    setFont(doc, 9, "bold", C.danger)
+    doc.text("EVENEMENTS D'ANOMALIE  (" + String(anomalyEvents.length) + ")", M + 4, y + 5.5)
+    y += 12
+
+    autoTable(doc, {
+      startY: y,
+      margin: { left: M, right: M },
+      styles: {
+        fontSize: 8.5, font: "helvetica",
+        cellPadding: { top: 3.5, bottom: 3.5, left: 5, right: 5 },
+        textColor: C.text, lineColor: C.border, lineWidth: 0.2,
+      },
+      headStyles: { fillColor: [220, 38, 38], textColor: C.white, fontStyle: "bold", fontSize: 8.5 },
+      alternateRowStyles: { fillColor: [254, 248, 248] },
+      columnStyles: {
+        0: { cellWidth: 52 },
+        1: { cellWidth: "auto" },
+        2: { cellWidth: 28, halign: "center" },
+        3: { cellWidth: 14, halign: "center" },
+      },
+      head: [["Pattern concerne", "Evenement detecte", "Confiance", "No"]],
+      body: anomalyEvents.slice().reverse().map(function(e, i) {
+        const evtTxt = e.type === "new_match"
+          ? "Correspondance complete (match #" + String(e.detections_count || 1) + ")"
+          : "Escalade vers niveau " + ((LEVEL_META[e.to_level] || {}).label || e.to_level || "-")
+        return [
+          e.pattern_name || "-",
+          evtTxt,
+          fmtNum(e.confidence, 0) + "%",
+          String(anomalyEvents.length - i),
+        ]
+      }),
+    })
+    y = doc.lastAutoTable.finalY + 12
+  } else if (!isAnomaly) {
+    checkPage(20)
+    fillRect(doc, M, y, CW, 14, [240, 253, 250])
+    doc.setDrawColor(...C.success); doc.setLineWidth(3)
+    doc.line(M, y, M, y + 14)
+    doc.setLineWidth(0.2); doc.rect(M, y, CW, 14)
+    setFont(doc, 10, "bold", C.success)
+    doc.text("Aucune anomalie enregistree durant cette session d'analyse.", M + 7, y + 9)
+    y += 22
+  }
+
+  // --- CAPTURES ---
+  if (snapshots && snapshots.length > 0) {
+    doc.addPage(); y = 18
+    fillRect(doc, 0, 0, pageW, 16, C.danger)
+    setFont(doc, 11, "bold", C.white)
+    doc.text("CAPTURES - ANOMALIES DETECTEES EN TEMPS REEL", M, 11)
+    y = 24
+
+    snapshots.forEach(function(snap, idx) {
+      checkPage(snap.imageData ? 100 : 30)
+      fillRect(doc, M, y, CW, 12, [254, 242, 242])
+      doc.setDrawColor(...C.danger); doc.setLineWidth(3)
+      doc.line(M, y, M, y + 12)
+      doc.setLineWidth(0.2); doc.rect(M, y, CW, 12)
+      const lm = LEVEL_META[snap.level] || LEVEL_META.normal
+      const tsStr = new Date(snap.timestamp).toLocaleString("fr-FR")
+      setFont(doc, 9, "bold", C.danger)
+      doc.text("#" + String(idx + 1) + "  " + (snap.patternName || "-"), M + 6, y + 5.5)
+      setFont(doc, 8, "normal", C.muted)
+      doc.text("Confiance " + fmtNum(snap.confidence, 0) + "%  -  Niveau " + lm.label + "  -  " + tsStr, M + 6, y + 10)
+      y += 16
+      if (snap.imageData) {
+        const imgH = 72
+        try { doc.addImage(snap.imageData, "PNG", M, y, CW, imgH) } catch (_) {}
+        y += imgH + 8
+      }
+      if (idx < snapshots.length - 1) {
+        doc.setDrawColor(...C.border); doc.setLineWidth(0.3)
+        doc.line(M, y, M + CW, y)
+        y += 8
+      }
+    })
+  }
+
+  // --- FOOTER ---
+  const pageCount = doc.internal.getNumberOfPages()
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i)
+    fillRect(doc, 0, pageH - 9, pageW, 9, C.bgLight)
+    doc.setDrawColor(...C.border); doc.setLineWidth(0.3)
+    doc.line(0, pageH - 9, pageW, pageH - 9)
+    setFont(doc, 7, "normal", C.muted)
+    doc.text("Systeme de surveillance industrielle - Pattern Recognition", M, pageH - 3)
+    const p = "Page " + String(i) + " / " + String(pageCount)
+    doc.text(p, pageW - M - doc.getTextWidth(p), pageH - 3)
+  }
+
+  const dateTag = now.toISOString().slice(0, 10)
+  const dsTag = (dataset || "session").replace(/\s/g, "_")
+  doc.save("rapport_anomalies_" + dsTag + "_" + dateTag + ".pdf")
+}
+```
+
+# TOTAL : 2213 lignes de code

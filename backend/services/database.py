@@ -2,9 +2,25 @@ import sqlite3
 import json
 import time
 from pathlib import Path
+from passlib.context import CryptContext
 
 DB_PATH = Path(__file__).parent.parent / "patterns.db"
 
+_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def _truncate_password_to_72(s: str) -> str:
+    """Return a UTF-8 safe string whose encoded length <= 72 bytes.
+    Bcrypt (via passlib) rejects passwords longer than 72 bytes; we
+    truncate on the encoded byte length and decode with 'ignore' to
+    avoid cutting a multi-byte sequence.
+    """
+    if s is None:
+        return s
+    b = s.encode("utf-8")
+    if len(b) <= 72:
+        return s
+    return b[:72].decode("utf-8", "ignore")
 
 def _get_conn():
     conn = sqlite3.connect(str(DB_PATH))
@@ -15,6 +31,14 @@ def _get_conn():
 
 def init_db():
     conn = _get_conn()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            username      TEXT    NOT NULL UNIQUE,
+            password_hash TEXT    NOT NULL,
+            created_at    REAL    NOT NULL
+        )
+    """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS patterns (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,6 +83,49 @@ def init_db():
         conn.execute("ALTER TABLE patterns ADD COLUMN dataset TEXT DEFAULT ''")
     except Exception:
         pass
+    _ensure_default_user(conn)
+    conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  AUTHENTIFICATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _ensure_default_user(conn):
+    """Crée le compte admin par défaut s'il n'existe pas."""
+    exists = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()
+    if not exists:
+        conn.execute(
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+            ("admin", _pwd_context.hash(_truncate_password_to_72("admin")), time.time()),
+        )
+        conn.commit()
+
+
+def get_user(username: str):
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT id, username, password_hash FROM users WHERE username = ?", (username,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {"id": row["id"], "username": row["username"], "password_hash": row["password_hash"]}
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    if plain is None:
+        return False
+    return _pwd_context.verify(_truncate_password_to_72(plain), hashed)
+
+
+def set_password(username: str, new_password: str):
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE users SET password_hash = ? WHERE username = ?",
+        (_pwd_context.hash(_truncate_password_to_72(new_password)), username),
+    )
+    conn.commit()
     conn.close()
 
 
